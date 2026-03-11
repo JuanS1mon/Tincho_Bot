@@ -1,0 +1,1 @@
+"""Indicators package - Indicadores técnicos."""

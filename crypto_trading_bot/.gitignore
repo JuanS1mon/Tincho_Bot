@@ -1,0 +1,44 @@
+# ============================================================
+# .gitignore - Crypto Trading Bot
+# ============================================================
+
+# --- Claves y secretos ---
+.env
+*.env.*
+
+# --- Base de datos ---
+data/*.db
+data/*.sqlite
+
+# --- Logs ---
+logs/*.log
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# --- Entorno virtual ---
+venv/
+.venv/
+env/
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Data generada ---
+data/equity_history.csv

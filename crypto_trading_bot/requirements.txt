@@ -1,0 +1,23 @@
+# Crypto Trading Bot - Dependencias
+# Python 3.11+
+
+# --- Core ---
+python-binance>=1.0.19
+pandas>=2.1.0
+numpy>=1.26.0
+python-dotenv>=1.0.0
+requests>=2.31.0
+
+# --- API ---
+fastapi>=0.104.0
+uvicorn>=0.24.0
+
+# --- AI (SDK compatible con DeepSeek, OpenAI, Gemini) ---
+openai>=1.12.0
+
+# --- Análisis y visualización ---
+matplotlib>=3.8.0
+scipy>=1.11.0
+
+# --- Utilidades ---
+schedule>=1.2.0
