@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Any, Dict, Optional
 
 from openai import OpenAI
 
@@ -25,11 +25,12 @@ from config.logger import trading_logger as logger, error_logger
 class AIDecision:
     trade: bool
     symbol: str
-    direction: str           # LONG | SHORT
-    capital_usage: float     # fracción del capital total (0.0 – 0.30)
-    confidence: float        # 0.0 – 1.0
+    direction: str                          # LONG | SHORT
+    capital_usage: float                    # fracción del capital del símbolo (0.0 – 0.50)
+    confidence: float                       # 0.0 – 1.0
     reasoning: str
-    raw_response: str        # respuesta cruda para logs
+    raw_response: str                       # respuesta cruda para logs
+    parameter_adjustments: Optional[Dict[str, Any]] = None  # ajustes sugeridos por la IA
 
 
 class LLMClient:
@@ -103,14 +104,19 @@ class LLMClient:
 
         # Sanitizar valores
         try:
+            # parameter_adjustments es opcional: None si ausente o null
+            raw_adjustments = data.get("parameter_adjustments")
+            param_adj = raw_adjustments if isinstance(raw_adjustments, dict) else None
+
             decision = AIDecision(
                 trade=bool(data["trade"]),
                 symbol=str(data["symbol"]).upper().strip(),
                 direction=str(data["direction"]).upper().strip(),
-                capital_usage=max(0.0, min(float(data["capital_usage"]), settings.max_capital_per_trade)),
+                capital_usage=max(0.0, min(float(data["capital_usage"]), 0.50)),
                 confidence=max(0.0, min(float(data["confidence"]), 1.0)),
                 reasoning=str(data.get("reasoning", ""))[:200],
                 raw_response=raw,
+                parameter_adjustments=param_adj,
             )
         except (TypeError, ValueError) as exc:
             error_logger.error("LLMClient: error sanitizando respuesta: %s", exc)

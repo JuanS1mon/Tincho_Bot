@@ -40,6 +40,17 @@ class RiskTool:
         self.max_leverage = settings.leverage
         self.trailing_callback_pct = 1.0  # 1% trailing stop por defecto
 
+    def sync_params(self, params) -> None:
+        """
+        Sincroniza los parámetros con los valores dinámicos del agente.
+        Se llama desde decision_engine antes de cada validación.
+        """
+        self.max_capital_pct = params.max_capital_per_trade
+        self.risk_per_trade = params.risk_per_trade
+        self.stop_loss_pct = params.stop_loss
+        self.take_profit_pct = params.take_profit
+        self.max_leverage = params.leverage
+
     def validate(
         self,
         direction: str,

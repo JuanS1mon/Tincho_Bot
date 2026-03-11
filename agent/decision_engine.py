@@ -28,6 +28,7 @@ from analysis.open_interest_analyzer import OIAnalysis
 from ai.llm_client import llm_client, AIDecision
 from ai.decision_prompt import build_decision_prompt
 from agent.state_manager import AgentState, SimulationState, AIDecisionState
+from agent.parameters_manager import parameters_manager
 from storage.trade_repository import trade_repository
 from config.settings import settings
 from config.logger import trading_logger as logger, error_logger
@@ -88,7 +89,11 @@ class DecisionEngine:
 
         # ── 2. Consultar IA ───────────────────────────────────────────────────
         logger.info("[%s] Consultando IA...", symbol)
-        user_prompt = build_decision_prompt(all_market_data, sim)
+        user_prompt = build_decision_prompt(
+            all_market_data,
+            sim,
+            dynamic_params=parameters_manager.params,
+        )
         ai_decision: Optional[AIDecision] = llm_client.decide(user_prompt)
 
         if ai_decision is None:
@@ -112,6 +117,12 @@ class DecisionEngine:
         if not ai_decision.trade:
             reason = f"IA rechazó el trade: {ai_decision.reasoning}"
             logger.info("[%s] %s", symbol, reason)
+            # Aplicar ajustes de parámetros aunque no haya trade
+            if ai_decision.parameter_adjustments:
+                parameters_manager.apply_adjustments(
+                    ai_decision.parameter_adjustments,
+                    reason=f"No-trade cycle: {ai_decision.reasoning}",
+                )
             return False, reason
 
         # Verificar coherencia señal local vs IA
@@ -122,12 +133,19 @@ class DecisionEngine:
             )
 
         # ── 3. Validar riesgo ─────────────────────────────────────────────────
+        # Sincronizar RiskTool con los parámetros dinámicos actuales
+        risk_tool.sync_params(parameters_manager.params)
+
+        # Capital asignado a este símbolo (50% / 50% del total)
+        symbol_allocation = portfolio_tool.symbol_allocation(symbol)
+        symbol_available = portfolio_tool.available_capital_for_symbol(symbol)
+
         current_price = indicators.price
         risk_params: RiskParams = risk_tool.validate(
             direction=direction,
             entry_price=current_price,
-            available_capital=portfolio_tool.available_capital,
-            total_capital=portfolio_tool.capital,
+            available_capital=symbol_available,
+            total_capital=symbol_allocation,
             capital_usage=ai_decision.capital_usage,
         )
         state.add_log(
@@ -140,7 +158,15 @@ class DecisionEngine:
             logger.info("[%s] %s", symbol, reason)
             return False, reason
 
-        # ── 4. Ejecutar trade ─────────────────────────────────────────────────
+        # ── 4. Aplicar ajustes de parámetros sugeridos por la IA ─────────────
+        if ai_decision.parameter_adjustments:
+            parameters_manager.apply_adjustments(
+                ai_decision.parameter_adjustments,
+                reason=f"Trade approved: {ai_decision.reasoning}",
+            )
+            state.add_log(f"Parámetros ajustados por IA: {ai_decision.parameter_adjustments}")
+
+        # ── 5. Ejecutar trade ─────────────────────────────────────────────────
         logger.info("[%s] Ejecutando trade %s (dry_run=%s)...", symbol, direction, self.dry_run)
         result = execution_tool.execute(
             symbol=symbol,

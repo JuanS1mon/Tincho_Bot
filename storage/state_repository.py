@@ -78,6 +78,32 @@ class StateRepository:
             error_logger.error("StateRepository.get_market_history error: %s", exc)
             return []
 
+    # ── Parámetros dinámicos ──────────────────────────────────────────────────
+
+    def save_parameters(self, params: Dict[str, Any]) -> None:
+        """Persiste los parámetros dinámicos del agente (upsert)."""
+        try:
+            doc = {"_id": "dynamic_parameters", **params, "updated_at": datetime.utcnow().isoformat()}
+            db_manager.db["agent_states"].replace_one(
+                {"_id": "dynamic_parameters"},
+                doc,
+                upsert=True,
+            )
+        except Exception as exc:
+            error_logger.error("StateRepository.save_parameters error: %s", exc)
+
+    def load_parameters(self) -> Optional[Dict[str, Any]]:
+        """Carga los últimos parámetros dinámicos guardados."""
+        try:
+            doc = db_manager.db["agent_states"].find_one({"_id": "dynamic_parameters"})
+            if doc:
+                doc.pop("_id", None)
+                doc.pop("updated_at", None)
+            return doc
+        except Exception as exc:
+            error_logger.error("StateRepository.load_parameters error: %s", exc)
+            return None
+
 
 # Instancia global
 state_repository = StateRepository()

@@ -66,16 +66,35 @@ class PortfolioTool:
 
     @property
     def available_capital(self) -> float:
-        """Capital no comprometido en posiciones abiertas."""
+        """Capital total no comprometido en posiciones abiertas."""
         committed = sum(p.capital_used for p in self.positions.values())
         return max(0, self.capital - committed)
 
+    def available_capital_for_symbol(self, symbol: str) -> float:
+        """
+        Capital disponible para un símbolo específico.
+
+        El capital total se divide equitativamente entre todos los símbolos
+        configurados (50%/50% con 2 símbolos). Cada símbolo opera solo con
+        su porción, permitiendo crecimiento incremental independiente.
+
+        Ejemplo: capital=200 USDT, 2 símbolos → 100 USDT por símbolo.
+        Si BTC ya tiene comprometidos 30 USDT → BTC disponible = 70 USDT.
+        """
+        num_symbols = max(1, len(settings.symbols))
+        symbol_allocation = self.capital / num_symbols
+        committed = self.positions[symbol].capital_used if symbol in self.positions else 0.0
+        return max(0.0, symbol_allocation - committed)
+
+    def symbol_allocation(self, symbol: str) -> float:
+        """Capital total asignado al símbolo (sin descontar posiciones abiertas)."""
+        num_symbols = max(1, len(settings.symbols))
+        return self.capital / num_symbols
+
     @property
     def total_equity(self) -> float:
-        """Capital + PnL no realizado de todas las posiciones."""
-        return self.capital + sum(
-            p.unrealized_pnl(p.entry_price) for p in self.positions.values()
-        )
+        """Capital total (el capital crece con cada trade ganador vía close_position)."""
+        return self.capital
 
     @property
     def win_rate(self) -> float:

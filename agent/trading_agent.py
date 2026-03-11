@@ -26,6 +26,7 @@ from analysis.orderbook_analyzer import orderbook_analyzer
 from analysis.signal_detector import signal_detector, TradingSignal
 from agent.decision_engine import decision_engine
 from agent.state_manager import AgentState, MarketSnapshot as MarketSnapshotState, SignalState
+from agent.parameters_manager import parameters_manager
 from storage.state_repository import state_repository
 from tools.portfolio_tool import portfolio_tool
 from config.settings import settings
@@ -41,6 +42,9 @@ class TradingAgent:
         self._running = False
         self._stop_event = threading.Event()
 
+        # Restaurar parámetros dinámicos desde MongoDB (ajustes previos de la IA)
+        parameters_manager.load_from_db()
+
         # Configurar dry_run en el motor de decisión
         decision_engine.dry_run = dry_run
 
@@ -48,6 +52,7 @@ class TradingAgent:
             "TradingAgent inicializado | símbolos=%s | dry_run=%s | testnet=%s",
             settings.symbols, dry_run, settings.binance_testnet,
         )
+        logger.info("Parámetros dinámicos actuales | %s", parameters_manager.summary())
 
     # ── Control del loop ─────────────────────────────────────────────────────
 
@@ -56,7 +61,8 @@ class TradingAgent:
         self._running = True
         self._stop_event.clear()
         self.state.status = "ANALYZING"
-        logger.info("Agente iniciado. Intervalo de análisis: %ds", settings.analysis_interval_seconds)
+        interval = parameters_manager.params.analysis_interval_seconds
+        logger.info("Agente iniciado. Intervalo de análisis: %ds", interval)
         self._run_loop()
 
     def stop(self) -> None:
@@ -97,9 +103,9 @@ class TradingAgent:
             self.state.last_cycle_time = time.time()
             self._persist_state()
 
-            # Calcular tiempo de espera restante
+            # Calcular tiempo de espera restante — usa el intervalo dinámico
             elapsed = time.time() - cycle_start
-            wait = max(0, settings.analysis_interval_seconds - elapsed)
+            wait = max(0, parameters_manager.params.analysis_interval_seconds - elapsed)
             logger.info("Ciclo completado en %.1fs. Próximo análisis en %.1fs.", elapsed, wait)
 
             self._stop_event.wait(timeout=wait)
