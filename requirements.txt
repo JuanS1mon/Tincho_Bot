@@ -1,0 +1,29 @@
+# ── Core ─────────────────────────────────────────────────────────────────────
+# Nota: pandas 3.x y numpy 2.x requeridos para Python 3.12+
+python-binance==1.0.19
+pandas>=3.0.0
+numpy>=2.0.0
+
+# ── Technical Analysis ───────────────────────────────────────────────────────
+ta==0.11.0
+
+# ── AI / LLM (OpenAI SDK — compatible con DeepSeek, Groq, Anthropic wrappers)
+openai>=1.30.0
+
+# ── API HTTP ─────────────────────────────────────────────────────────────────
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+
+# ── Database — MongoDB ───────────────────────────────────────────────────────
+pymongo>=4.10.0
+
+# ── Config / Env ─────────────────────────────────────────────────────────────
+python-dotenv>=1.0.1
+pydantic>=2.10.0
+pydantic-settings>=2.7.0
+
+# ── HTTP client (usado por python-binance internamente) ──────────────────────
+requests>=2.32.0
+
+# ── Extras de tipo / utilidad ────────────────────────────────────────────────
+python-dateutil>=2.9.0
