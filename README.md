@@ -94,10 +94,15 @@ python app/main.py --dry-run --interval 60
 
 # Simulación ultra-rápida — 1 ciclo cada 30 segundos
 python app/main.py --dry-run --interval 30
+
+# Simulación con consulta forzada a la IA en el primer ciclo (aunque no haya señal)
+python app/main.py --dry-run --interval 60 --force-ai
 ```
 
-El flag `--interval SEGUNDOS` acepta cualquier valor y **siempre tiene
-prioridad** sobre el intervalo guardado en MongoDB por la IA.
+| Flag | Descripción |
+|------|-------------|
+| `--interval N` | Override del intervalo en segundos. Siempre tiene prioridad sobre el valor guardado en MongoDB por la IA. |
+| `--force-ai` | Fuerza una consulta a la IA en el **primer ciclo** aunque no haya señal de trading. Útil para verificar que la IA responde y ver su razonamiento. El log mostrará `🤖 IA → OPERAR / NO OPERAR \| conf=X% \| ...` |
 
 ### Monitoreo durante la simulación
 
@@ -128,6 +133,19 @@ Una vez validada la simulación, podés operar con la cuenta testnet de Binance
 ```powershell
 python app/main.py --live
 ```
+
+### Trading real con dinero propio
+
+> ⚠️ **El bot opera en Binance Futures (USDT-M).** El saldo debe estar en la cuenta de futuros, **no en Spot**.
+
+**Pasos para empezar:**
+1. En la app de Binance → **Cartera** → **Transferir**
+2. Origen: **Spot** | Destino: **USDT Margined Futures** | Coin: **USDT**
+3. Confirmar la transferencia
+4. Editar `.env`: `BINANCE_TESTNET=false` y poner las claves de **mainnet**
+5. Iniciar el bot: `python app/main.py --live`
+
+El bot lee automáticamente el saldo disponible en futuros al arrancar y lo usa como capital inicial.
 
 ### Sin API HTTP (modo silencioso)
 
@@ -202,6 +220,25 @@ Luego abrir **http://localhost:3000** en el navegador.
   print('Parametros reseteados')
   PY
   ```
+
+## 🤖 Parámetros dinámicos controlados por la IA
+
+La IA puede ajustar estos parámetros automáticamente entre ciclos. Los valores se persisten en MongoDB y se restauran al reiniciar.
+
+| Parámetro | Default | Rango | Qué controla |
+|-----------|---------|-------|--------------|
+| `leverage` | 3 | 1–10 | Apalancamiento en futuros |
+| `max_capital_per_trade` | 30% | 5–50% | Capital máximo por operación |
+| `risk_per_trade` | 1% | 0.5–3% | Riesgo por trade |
+| `stop_loss` | 2% | 1–5% | Stop loss |
+| `take_profit` | 6% | 2–15% | Take profit |
+| `analysis_interval_seconds` | 900 | 180–3600 | Intervalo entre ciclos |
+| `sma20_proximity_pct` | 2.5% | 0.5–5% | Cuán cerca del SMA20 debe estar el precio para activar señal pullback |
+| `rsi_long_threshold` | 50 | 40–65 | RSI mínimo para señal LONG |
+| `rsi_short_threshold` | 45 | 30–55 | RSI máximo para señal SHORT |
+| `liquidation_dominance_ratio` | 1.5× | 1.2–3.0× | Ratio de liquidaciones para declarar lado dominante (CASCADE_UP/DOWN) |
+
+> La IA ajusta estos valores gradualmente según el rendimiento. Para ver los valores actuales: `Invoke-RestMethod http://localhost:8000/agent/status | ConvertTo-Json`
 
 ## 🧾 Utilidades
 
