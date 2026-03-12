@@ -190,6 +190,7 @@ class AgentConfig:
             "sma20_proximity_pct":       (0.005, 0.05, float),
             "rsi_long_threshold":        (40.0,  65.0, float),
             "rsi_short_threshold":       (30.0,  55.0, float),
+            "liquidation_dominance_ratio": (1.2, 3.0, float),
         }
 
     # ── Consultas de ayuda ────────────────────────────────────────────────────

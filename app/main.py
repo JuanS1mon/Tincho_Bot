@@ -73,6 +73,12 @@ Ejemplos:
         metavar="SEGUNDOS",
         help="Override del intervalo de análisis en segundos (ej. --interval 60 para simulaciones)",
     )
+    parser.add_argument(
+        "--force-ai",
+        action="store_true",
+        dest="force_ai",
+        help="Fuerza la consulta a la IA en el primer ciclo aunque no haya señal (útil para pruebas)",
+    )
     return parser.parse_args()
 
 
@@ -155,11 +161,11 @@ def main() -> None:
     if args.no_api:
         # Iniciar solo el agente sin API
         from agent.trading_agent import TradingAgent
-        agent = TradingAgent(dry_run=dry_run, interval_override=args.interval)
+        agent = TradingAgent(dry_run=dry_run, interval_override=args.interval, force_ai=args.force_ai)
         agent.start()
     else:
         from app.agent_runner import AgentRunner
-        runner = AgentRunner(dry_run=dry_run, interval_override=args.interval)
+        runner = AgentRunner(dry_run=dry_run, interval_override=args.interval, force_ai=args.force_ai)
         runner.run()
 
 

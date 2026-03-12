@@ -11,6 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List
 
+from agent.parameters_manager import parameters_manager
+
 
 @dataclass
 class LiquidationAnalysis:
@@ -51,15 +53,16 @@ class LiquidationAnalyzer:
             if short_liqs else 0
         )
 
-        # Lado dominante
-        if total_long > total_short * 1.5:
+        # Lado dominante (ratio configurable por la IA)
+        ratio = parameters_manager.params.liquidation_dominance_ratio
+        if total_long > total_short * ratio:
             dominant = "LONG_DOMINANT"
             signal = "CASCADE_DOWN"
-            desc = "Alto volumen de LONGS liquidados → posible presión bajista adicional"
-        elif total_short > total_long * 1.5:
+            desc = f"Longs liquidados ({ratio:.1f}x) → posible presión bajista adicional"
+        elif total_short > total_long * ratio:
             dominant = "SHORT_DOMINANT"
             signal = "CASCADE_UP"
-            desc = "Alto volumen de SHORTS liquidados → posible short squeeze / subida brusca"
+            desc = f"Shorts liquidados ({ratio:.1f}x) → posible short squeeze / subida brusca"
         else:
             dominant = "BALANCED"
             signal = "NEUTRAL"

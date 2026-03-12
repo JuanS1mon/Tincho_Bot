@@ -41,6 +41,7 @@ Parameter adjustment rules:
   - Change at most 2-3 parameters at once to avoid chaotic behavior.
   - If NO_SIGNAL persists many cycles in trending markets → consider raising sma20_proximity_pct (relax pullback filter).
   - If too many false entries → lower sma20_proximity_pct (tighten pullback filter) or raise rsi_long_threshold.
+  - If liquidation cascades are common → lower liquidation_dominance_ratio (be more sensitive to dominant liquidations).
 
 Response format:
   - Always respond ONLY with valid JSON. No explanations, no markdown, just raw JSON.
@@ -63,6 +64,7 @@ La IA puede proponer ajustes dentro de estos rangos. Si propone un valor fuera d
 | sma20_proximity_pct         | 0.005 | 0.05  | float | 0.025   |
 | rsi_long_threshold          | 40    | 65    | float | 50.0    |
 | rsi_short_threshold         | 30    | 55    | float | 45.0    |
+| liquidation_dominance_ratio | 1.2   | 3.0   | float | 1.5     |
 
 ---
 

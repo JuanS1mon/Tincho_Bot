@@ -192,6 +192,54 @@ class DecisionEngine:
         state.add_log(f"✓ Trade ejecutado: {direction} {symbol} @ {current_price:.4f}")
         return True, f"Trade {direction} {symbol} ejecutado exitosamente"
 
+    def consult_ai_only(
+        self,
+        symbol: str,
+        df: pd.DataFrame,
+        indicators: Indicators,
+        volume_analysis: VolumeAnalysis,
+        oi_analysis: OIAnalysis,
+        funding_rate: float,
+        all_market_data: dict,
+        state: AgentState,
+    ) -> None:
+        """
+        Consulta la IA solo para análisis/registro, sin ejecutar ningún trade.
+        Usado con --force-ai para observar el razonamiento de la IA en pruebas.
+        """
+        from tools.simulation_tool import simulation_tool
+        logger.info("[%s] [--force-ai] Consultando IA sin señal activa...", symbol)
+
+        # Simulación neutral para dar contexto a la IA (dirección LONG como referencia)
+        sim = simulation_tool.simulate(df, "LONG", portfolio_tool.capital)
+
+        user_prompt = build_decision_prompt(
+            all_market_data,
+            sim,
+            dynamic_params=parameters_manager.params,
+        )
+        ai_decision = llm_client.decide(user_prompt)
+
+        if ai_decision is None:
+            logger.warning("[%s] [--force-ai] IA no respondió", symbol)
+            return
+
+        decision_word = "OPERAR" if ai_decision.trade else "NO OPERAR"
+        logger.info(
+            "[%s] [IA] %s | conf=%.0f%% | %s",
+            symbol, decision_word, ai_decision.confidence * 100, ai_decision.reasoning,
+        )
+        state.add_log(
+            f"[IA force] {decision_word} conf={ai_decision.confidence:.0%} | {ai_decision.reasoning}"
+        )
+
+        # Aplicar ajustes de parámetros si la IA los propone
+        if ai_decision.parameter_adjustments:
+            parameters_manager.apply_adjustments(
+                ai_decision.parameter_adjustments,
+                reason=f"force-ai cycle: {ai_decision.reasoning}",
+            )
+
     def _log_execution(
         self, symbol, direction, signal, sim, ai_decision, risk_params, result
     ) -> None:

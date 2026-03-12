@@ -52,6 +52,7 @@ class DynamicParams:
     sma20_proximity_pct: float    = 0.025  # Máx distancia precio-SMA20 para pullback
     rsi_long_threshold: float     = 50.0   # RSI mínimo para señal LONG
     rsi_short_threshold: float    = 45.0   # RSI máximo para señal SHORT
+    liquidation_dominance_ratio: float = 1.5  # Ratio para declarar lado dominante en liquidaciones
 
     # Metadatos de ajustes
     adjustment_count: int         = 0

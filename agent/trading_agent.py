@@ -36,8 +36,9 @@ from config.logger import trading_logger as logger, error_logger
 class TradingAgent:
     """Agente autónomo de trading de criptomonedas."""
 
-    def __init__(self, dry_run: bool = True, interval_override: int | None = None) -> None:
+    def __init__(self, dry_run: bool = True, interval_override: int | None = None, force_ai: bool = False) -> None:
         self.dry_run = dry_run
+        self.force_ai = force_ai  # fuerza consulta IA en el primer ciclo aunque no haya señal
         self.state = AgentState()
         self._running = False
         self._stop_event = threading.Event()
@@ -148,7 +149,33 @@ class TradingAgent:
         # ── Paso 5-7: Evaluar señales y ejecutar trades ────────────────────────
         for symbol, signal in signals.items():
             if signal.signal == "NO_SIGNAL":
-                logger.info("[%s] Sin señal | %s", symbol, signal.reason)
+                # --force-ai: en el primer ciclo consultar IA de todos modos (solo análisis)
+                if self.force_ai and self.state.cycle == 1:
+                    logger.info(
+                        "[%s] Sin señal | %s | [--force-ai] consultando IA de todos modos...",
+                        symbol, signal.reason,
+                    )
+                    try:
+                        snap: MarketSnapshot = market_data_tool.get(symbol)
+                        futures_snap = futures_data_tool.get(
+                            symbol,
+                            current_price=snap.ticker["price"],
+                            prev_price=float(snap.df["close"].iloc[-2]) if len(snap.df) > 1 else snap.ticker["price"],
+                        )
+                        decision_engine.consult_ai_only(
+                            symbol=symbol,
+                            df=snap.df,
+                            indicators=snap.indicators,
+                            volume_analysis=volume_analyzer.analyze(snap.df),
+                            oi_analysis=futures_snap.oi_analysis,
+                            funding_rate=futures_snap.funding_rate,
+                            all_market_data=all_market_data,
+                            state=self.state,
+                        )
+                    except Exception as exc:
+                        error_logger.error("Error en consulta IA forzada para %s: %s", symbol, exc)
+                else:
+                    logger.info("[%s] Sin señal | %s", symbol, signal.reason)
                 continue
 
             logger.info(

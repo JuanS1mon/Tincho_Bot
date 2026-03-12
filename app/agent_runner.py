@@ -21,9 +21,9 @@ from config.logger import trading_logger as logger, error_logger
 class AgentRunner:
     """Orquesta el inicio del agente y la API en paralelo."""
 
-    def __init__(self, dry_run: bool = True, interval_override: int | None = None) -> None:
+    def __init__(self, dry_run: bool = True, interval_override: int | None = None, force_ai: bool = False) -> None:
         self.dry_run = dry_run
-        self.agent = TradingAgent(dry_run=dry_run, interval_override=interval_override)
+        self.agent = TradingAgent(dry_run=dry_run, interval_override=interval_override, force_ai=force_ai)
         self._api_thread: threading.Thread | None = None
         self._agent_thread: threading.Thread | None = None
 
