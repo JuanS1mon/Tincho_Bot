@@ -16,7 +16,7 @@ from typing import Any, Dict, Optional
 
 from openai import OpenAI
 
-from ai.decision_prompt import SYSTEM_PROMPT
+from config.agent_config import agent_config
 from config.settings import settings
 from config.logger import trading_logger as logger, error_logger
 
@@ -64,7 +64,7 @@ class LLMClient:
             response = self._client.chat.completions.create(
                 model=settings.ai_model,
                 messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "system", "content": agent_config.system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.2,

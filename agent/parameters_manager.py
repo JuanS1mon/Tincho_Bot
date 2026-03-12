@@ -22,20 +22,18 @@ from dataclasses import dataclass, field, asdict
 from typing import Any, Dict, Tuple
 
 from config.settings import settings
+from config.agent_config import agent_config
 from config.logger import trading_logger as logger, error_logger
 
 
-# Límites por parámetro numérico: (min, max, tipo_de_cast)
-PARAM_BOUNDS: Dict[str, Tuple] = {
-    "leverage":                  (1,    10,   int),
-    "max_capital_per_trade":     (0.05, 0.50, float),
-    "risk_per_trade":            (0.005, 0.03, float),
-    "stop_loss":                 (0.01, 0.05, float),
-    "take_profit":               (0.02, 0.15, float),
-    "analysis_interval_seconds": (180,  3600, int),
-}
+def _get_bounds() -> Dict[str, Tuple]:
+    """Lee los límites desde agente.md en tiempo de ejecución."""
+    return agent_config.param_bounds
 
-VALID_TIMEFRAMES = {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h"}
+
+def _get_valid_timeframes() -> set:
+    """Lee los timeframes válidos desde agente.md en tiempo de ejecución."""
+    return agent_config.valid_timeframes
 
 
 @dataclass
@@ -85,7 +83,7 @@ class ParametersManager:
                 logger.info("Parámetros dinámicos: usando defaults de .env | %s", self.summary())
                 return
 
-            for key, (min_v, max_v, cast) in PARAM_BOUNDS.items():
+            for key, (min_v, max_v, cast) in _get_bounds().items():
                 if key in saved:
                     try:
                         val = cast(saved[key])
@@ -93,7 +91,7 @@ class ParametersManager:
                     except (TypeError, ValueError):
                         pass
 
-            if "timeframe" in saved and saved["timeframe"] in VALID_TIMEFRAMES:
+            if "timeframe" in saved and saved["timeframe"] in _get_valid_timeframes():
                 self.params.timeframe = saved["timeframe"]
 
             self.params.adjustment_count = int(saved.get("adjustment_count", 0))
@@ -127,12 +125,12 @@ class ParametersManager:
         # Timeframe es un string enum especial
         if "timeframe" in adjustments:
             new_tf = str(adjustments["timeframe"])
-            if new_tf in VALID_TIMEFRAMES and new_tf != self.params.timeframe:
+            if new_tf in _get_valid_timeframes() and new_tf != self.params.timeframe:
                 changes.append(f"timeframe: {self.params.timeframe} → {new_tf}")
                 self.params.timeframe = new_tf
 
         # Parámetros numéricos con límites
-        for key, (min_v, max_v, cast) in PARAM_BOUNDS.items():
+        for key, (min_v, max_v, cast) in _get_bounds().items():
             if key not in adjustments:
                 continue
             try:
