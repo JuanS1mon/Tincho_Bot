@@ -122,10 +122,11 @@ class LLMClient:
             error_logger.error("LLMClient: error sanitizando respuesta: %s", exc)
             return None
 
+        action = "OPERAR" if decision.trade else "NO OPERAR"
         logger.info(
-            "Decisión IA: trade=%s symbol=%s dir=%s capital=%.0f%% confidence=%.0f%% | %s",
-            decision.trade, decision.symbol, decision.direction,
-            decision.capital_usage * 100, decision.confidence * 100,
+            "[%s] 🤖 IA → %s | conf=%.0f%% | %s",
+            decision.symbol, action,
+            decision.confidence * 100,
             decision.reasoning,
         )
         return decision
