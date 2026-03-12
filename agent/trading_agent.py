@@ -36,7 +36,7 @@ from config.logger import trading_logger as logger, error_logger
 class TradingAgent:
     """Agente autónomo de trading de criptomonedas."""
 
-    def __init__(self, dry_run: bool = True) -> None:
+    def __init__(self, dry_run: bool = True, interval_override: int | None = None) -> None:
         self.dry_run = dry_run
         self.state = AgentState()
         self._running = False
@@ -44,6 +44,11 @@ class TradingAgent:
 
         # Restaurar parámetros dinámicos desde MongoDB (ajustes previos de la IA)
         parameters_manager.load_from_db()
+
+        # Aplicar override de intervalo si se pasó por CLI (tiene prioridad sobre DB)
+        if interval_override is not None:
+            parameters_manager.params.analysis_interval_seconds = interval_override
+            logger.info("Intervalo forzado a %ds (simulación via --interval)", interval_override)
 
         # Sincronizar capital con saldo real de Binance Futures
         portfolio_tool.sync_from_exchange()

@@ -79,7 +79,26 @@ python app/main.py --check-config
 
 ## ▶️ Ejecutar el agente
 
-- Dry‑run (sin enviar ó
+- Dry‑run (sin enviar órdenes):
+
+  ```powershell
+  python app/main.py --dry-run
+  ```
+
+- **Simulación de 1 hora** (ciclo cada 60s, ~60 análisis, sin dinero real):
+
+  ```powershell
+  python app/main.py --dry-run --interval 60
+  ```
+
+  Mientras corre, en otra terminal podés monitorear:
+
+  ```powershell
+  # Ver logs en tiempo real
+  Get-Content logs\trading.log -Wait -Tail 20
+
+  # Ver portafolio simulado
+  Invoke-RestMethod http://localhost:8000/portfolio | ConvertTo-Json
   ```
 
 - Trading real en testnet:

@@ -25,6 +25,10 @@ ROOT = Path(__file__).parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+# Forzar UTF-8 en stdout para que los caracteres especiales funcionen en Windows
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -60,6 +64,14 @@ Ejemplos:
         action="store_true",
         dest="check_config",
         help="Imprime la configuración cargada y sale",
+    )
+    parser.add_argument(
+        "--interval",
+        type=int,
+        default=None,
+        dest="interval",
+        metavar="SEGUNDOS",
+        help="Override del intervalo de análisis en segundos (ej. --interval 60 para simulaciones)",
     )
     return parser.parse_args()
 
@@ -135,14 +147,19 @@ def main() -> None:
         logger.warning("  Asegúrate de haber probado en testnet primero.")
         logger.warning("=" * 60)
 
+    if args.interval:
+        from agent.parameters_manager import parameters_manager
+        parameters_manager.params.analysis_interval_seconds = args.interval
+        logger.info("Intervalo de análisis forzado a %ds (via --interval)", args.interval)
+
     if args.no_api:
         # Iniciar solo el agente sin API
         from agent.trading_agent import TradingAgent
-        agent = TradingAgent(dry_run=dry_run)
+        agent = TradingAgent(dry_run=dry_run, interval_override=args.interval)
         agent.start()
     else:
         from app.agent_runner import AgentRunner
-        runner = AgentRunner(dry_run=dry_run)
+        runner = AgentRunner(dry_run=dry_run, interval_override=args.interval)
         runner.run()
 
 
