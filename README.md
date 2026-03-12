@@ -79,47 +79,67 @@ python app/main.py --check-config
 
 ## ▶️ Ejecutar el agente
 
-- Dry‑run (sin enviar órdenes):
+### Simulación (recomendado antes de operar con dinero real)
 
-  ```powershell
-  python app/main.py --dry-run
-  ```
+Corre el agente con datos de mercado reales de Binance testnet pero **sin
+ejecutar ninguna orden**. El capital es ficticio (el valor de `INITIAL_CAPITAL`
+en `.env`).
 
-- **Simulación de 1 hora** (ciclo cada 60s, ~60 análisis, sin dinero real):
+```powershell
+# Simulación estándar — 1 ciclo cada 15 minutos (igual que producción)
+python app/main.py --dry-run
 
-  ```powershell
-  python app/main.py --dry-run --interval 60
-  ```
+# Simulación rápida — 1 ciclo por minuto (~60 análisis en 1 hora)
+python app/main.py --dry-run --interval 60
 
-  Mientras corre, en otra terminal podés monitorear:
+# Simulación ultra-rápida — 1 ciclo cada 30 segundos
+python app/main.py --dry-run --interval 30
+```
 
-  ```powershell
-  # Ver logs en tiempo real
-  Get-Content logs\trading.log -Wait -Tail 20
+El flag `--interval SEGUNDOS` acepta cualquier valor y **siempre tiene
+prioridad** sobre el intervalo guardado en MongoDB por la IA.
 
-  # Ver portafolio simulado
-  Invoke-RestMethod http://localhost:8000/portfolio | ConvertTo-Json
-  ```
+### Monitoreo durante la simulación
 
-- Trading real en testnet:
+Mientras corre `--dry-run`, abre **otra terminal** y usa:
 
-  ```powershell
-  python app/main.py --live
-  ```
+```powershell
+# Ver logs en tiempo real (se actualiza solo):
+Get-Content logs\trading.log -Wait -Tail 20
 
-  > **Nota sobre listado blanco de IP:**
-  > Binance Testnet registra como origen de las peticiones sus propios
-  > servidores (por ejemplo `3.172.x.x`, `190.57.x.x`). Si habilitas
-  > restricciones de IP en tu clave de API, **no agregues tu IP local**,
-  > en su lugar desactiva la restricción o agrega las direcciones mostradas
-  > en los errores. De lo contrario recibirás
-  > `APIError(code=-2015): Invalid API-key, IP, or permissions for action`.
+# Ver portafolio simulado (capital, PnL, win rate):
+Invoke-RestMethod http://localhost:8000/portfolio | ConvertTo-Json
 
-- Sin API HTTP (modo silencioso):
+# Ver trades simulados ejecutados:
+Invoke-RestMethod "http://localhost:8000/trades?limit=20" | ConvertTo-Json -Depth 5
 
-  ```powershell
-  python app/main.py --live --no-api
-  ```
+# Ver análisis de mercado por símbolo (precio, RSI, tendencia):
+Invoke-RestMethod http://localhost:8000/market-analysis | ConvertTo-Json -Depth 5
+
+# Ver estado general del agente:
+Invoke-RestMethod http://localhost:8000/agent/status | ConvertTo-Json
+```
+
+### Trading real en testnet
+
+Una vez validada la simulación, podés operar con la cuenta testnet de Binance
+(sin dinero real, pero con órdenes reales):
+
+```powershell
+python app/main.py --live
+```
+
+### Sin API HTTP (modo silencioso)
+
+```powershell
+python app/main.py --live --no-api
+```
+
+### Detener el agente
+
+Presiona `Ctrl+C` en la terminal donde corre el bot. El apagado es graceful
+(cierra posiciones pendientes y guarda el estado en MongoDB).
+
 
 
 ## 📡 Monitoreo via HTTP
