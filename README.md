@@ -142,7 +142,37 @@ Presiona `Ctrl+C` en la terminal donde corre el bot. El apagado es graceful
 
 
 
-## 📡 Monitoreo via HTTP
+## �️ Dashboard Web (Next.js)
+
+El proyecto incluye un dashboard visual en `frontend/` que se conecta
+automáticamente a la API del bot y se actualiza cada 5 segundos.
+
+**Requisitos**: Node.js 18+ instalado.
+
+```powershell
+# Primera vez — instalar dependencias:
+cd frontend
+npm install
+
+# Iniciar el dashboard (mientras el bot corre en otra terminal):
+npm run dev
+```
+
+Luego abrir **http://localhost:3000** en el navegador.
+
+| Panel | Contenido |
+|-------|-----------|
+| Header | Estado del agente (ANALYZING/IDLE/ERROR), ciclo #, DRY-RUN/LIVE |
+| Portafolio | Capital, PnL acumulado, win rate, posiciones abiertas |
+| Posiciones | Entrada, SL, TP, cantidad, capital por posición |
+| Análisis de mercado | Precio, tendencia, RSI, SMA20/50, señal por símbolo |
+| Historial | Últimos 20 trades con PnL, dirección y duración |
+
+> Si el bot no está corriendo, el dashboard muestra un banner de "offline" con las instrucciones para iniciarlo.
+
+---
+
+## �📡 Monitoreo via HTTP
 
 | Endpoint | Descripción |
 |----------|-------------|
