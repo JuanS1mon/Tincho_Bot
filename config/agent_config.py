@@ -105,7 +105,7 @@ class AgentConfig:
         section = section_match.group(1)
 
         # Parsear cada fila de la tabla (ignorar cabecera y separador)
-        row_pattern = r"^\|\s*([a-z_]+)\s*\|\s*([\d.]+)\s*\|\s*([\d.]+)\s*\|\s*(int|float)\s*\|.*\|"
+        row_pattern = r"^\|\s*([a-z0-9_]+)\s*\|\s*([\d.]+)\s*\|\s*([\d.]+)\s*\|\s*(int|float)\s*\|.*\|"
         for line in section.splitlines():
             m = re.match(row_pattern, line.strip(), re.IGNORECASE)
             if not m:
@@ -187,6 +187,9 @@ class AgentConfig:
             "stop_loss":                 (0.01,  0.05, float),
             "take_profit":               (0.02,  0.15, float),
             "analysis_interval_seconds": (180,   3600, int),
+            "sma20_proximity_pct":       (0.005, 0.05, float),
+            "rsi_long_threshold":        (40.0,  65.0, float),
+            "rsi_short_threshold":       (30.0,  55.0, float),
         }
 
     # ── Consultas de ayuda ────────────────────────────────────────────────────

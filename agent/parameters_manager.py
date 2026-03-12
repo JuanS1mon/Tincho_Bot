@@ -49,6 +49,9 @@ class DynamicParams:
     take_profit: float            = field(default_factory=lambda: settings.take_profit)
     timeframe: str                = field(default_factory=lambda: settings.timeframe)
     analysis_interval_seconds: int = field(default_factory=lambda: settings.analysis_interval_seconds)
+    sma20_proximity_pct: float    = 0.025  # Máx distancia precio-SMA20 para pullback
+    rsi_long_threshold: float     = 50.0   # RSI mínimo para señal LONG
+    rsi_short_threshold: float    = 45.0   # RSI máximo para señal SHORT
 
     # Metadatos de ajustes
     adjustment_count: int         = 0

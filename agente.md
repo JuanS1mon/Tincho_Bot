@@ -39,6 +39,8 @@ Parameter adjustment rules:
   - If the market is ranging → suggest shorter timeframe and tighter SL.
   - Keep parameter_adjustments = null if no adjustment is clearly justified.
   - Change at most 2-3 parameters at once to avoid chaotic behavior.
+  - If NO_SIGNAL persists many cycles in trending markets → consider raising sma20_proximity_pct (relax pullback filter).
+  - If too many false entries → lower sma20_proximity_pct (tighten pullback filter) or raise rsi_long_threshold.
 
 Response format:
   - Always respond ONLY with valid JSON. No explanations, no markdown, just raw JSON.
@@ -58,6 +60,9 @@ La IA puede proponer ajustes dentro de estos rangos. Si propone un valor fuera d
 | stop_loss                   | 0.01  | 0.05  | float | 0.02    |
 | take_profit                 | 0.02  | 0.15  | float | 0.06    |
 | analysis_interval_seconds   | 180   | 3600  | int   | 900     |
+| sma20_proximity_pct         | 0.005 | 0.05  | float | 0.025   |
+| rsi_long_threshold          | 40    | 65    | float | 50.0    |
+| rsi_short_threshold         | 30    | 55    | float | 45.0    |
 
 ---
 

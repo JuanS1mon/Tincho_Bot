@@ -21,6 +21,7 @@ from tools.indicator_tool import Indicators
 from analysis.trend_detector import Trend, trend_detector
 from analysis.volume_analyzer import VolumeAnalysis
 from analysis.open_interest_analyzer import OIAnalysis
+from agent.parameters_manager import parameters_manager
 
 
 @dataclass
@@ -33,9 +34,6 @@ class TradingSignal:
 
 class SignalDetector:
     """Detecta señales de entrada aplicando las dos estrategias."""
-
-    # Pullback: precio debe estar dentro de X% de SMA20
-    SMA20_PROXIMITY_PCT: float = 0.015  # 1.5%
 
     def detect(
         self,
@@ -63,6 +61,7 @@ class SignalDetector:
         vol: VolumeAnalysis,
         oi: OIAnalysis,
     ) -> TradingSignal:
+        p = parameters_manager.params
         trend = trend_detector.detect(ind)
         proximity = abs(ind.price - ind.sma20) / ind.sma20 if ind.sma20 > 0 else 1
 
@@ -72,15 +71,15 @@ class SignalDetector:
         # ── LONG ─────────────────────────────────────────────────────────────
         if (
             trend == Trend.BULLISH
-            and proximity <= self.SMA20_PROXIMITY_PCT
-            and ind.rsi > 50
+            and proximity <= p.sma20_proximity_pct
+            and ind.rsi > p.rsi_long_threshold
             and vol_ok
             and oi_rising
         ):
             score = self._count_conditions(
                 trend == Trend.BULLISH,
-                proximity <= self.SMA20_PROXIMITY_PCT,
-                ind.rsi > 55,
+                proximity <= p.sma20_proximity_pct,
+                ind.rsi > p.rsi_long_threshold + 5,
                 vol.is_high_volume,
                 oi_rising,
             )
@@ -89,23 +88,25 @@ class SignalDetector:
                 strategy="PULLBACK",
                 confidence=round(score / 5, 2),
                 reason=(
-                    f"Tendencia BULLISH | precio {proximity*100:.2f}% de SMA20 | "
-                    f"RSI={ind.rsi:.1f} | Volumen {vol.trend} | OI {oi.trend}"
+                    f"Tendencia BULLISH | precio {proximity*100:.2f}% de SMA20 "
+                    f"(max {p.sma20_proximity_pct*100:.1f}%) | "
+                    f"RSI={ind.rsi:.1f}>{p.rsi_long_threshold} | "
+                    f"Volumen {vol.trend} | OI {oi.trend}"
                 ),
             )
 
         # ── SHORT ─────────────────────────────────────────────────────────────
         if (
             trend == Trend.BEARISH
-            and proximity <= self.SMA20_PROXIMITY_PCT
-            and ind.rsi < 45
+            and proximity <= p.sma20_proximity_pct
+            and ind.rsi < p.rsi_short_threshold
             and vol_ok
             and oi_rising
         ):
             score = self._count_conditions(
                 trend == Trend.BEARISH,
-                proximity <= self.SMA20_PROXIMITY_PCT,
-                ind.rsi < 40,
+                proximity <= p.sma20_proximity_pct,
+                ind.rsi < p.rsi_short_threshold - 5,
                 vol.is_high_volume,
                 oi_rising,
             )
@@ -114,8 +115,10 @@ class SignalDetector:
                 strategy="PULLBACK",
                 confidence=round(score / 5, 2),
                 reason=(
-                    f"Tendencia BEARISH | precio {proximity*100:.2f}% de SMA20 | "
-                    f"RSI={ind.rsi:.1f} | Volumen {vol.trend} | OI {oi.trend}"
+                    f"Tendencia BEARISH | precio {proximity*100:.2f}% de SMA20 "
+                    f"(max {p.sma20_proximity_pct*100:.1f}%) | "
+                    f"RSI={ind.rsi:.1f}<{p.rsi_short_threshold} | "
+                    f"Volumen {vol.trend} | OI {oi.trend}"
                 ),
             )
 
