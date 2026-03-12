@@ -122,7 +122,23 @@ class SignalDetector:
                 ),
             )
 
-        return TradingSignal("NO_SIGNAL", "NONE", 0.0, "Sin condiciones de pullback cumplidas")
+        # Construir razón detallada del NO_SIGNAL
+        missing = []
+        if proximity > p.sma20_proximity_pct:
+            missing.append(f"precio lejos de SMA20 ({proximity*100:.2f}% > {p.sma20_proximity_pct*100:.1f}%)")
+        if trend == Trend.BULLISH and ind.rsi <= p.rsi_long_threshold:
+            missing.append(f"RSI insuficiente ({ind.rsi:.1f} <= {p.rsi_long_threshold})")
+        if trend == Trend.BEARISH and ind.rsi >= p.rsi_short_threshold:
+            missing.append(f"RSI insuficiente ({ind.rsi:.1f} >= {p.rsi_short_threshold})")
+        if not vol_ok:
+            missing.append("volumen bajo")
+        if not oi_rising:
+            missing.append(f"OI {oi.trend} (necesita INCREASING)")
+        if trend == Trend.NEUTRAL:
+            missing.append("tendencia NEUTRAL (necesita BULLISH o BEARISH)")
+
+        reason = " | ".join(missing) if missing else "Sin condiciones de pullback cumplidas"
+        return TradingSignal("NO_SIGNAL", "NONE", 0.0, reason)
 
     # ── Estrategia 2: Breakout ─────────────────────────────────────────────
 

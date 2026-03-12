@@ -110,8 +110,13 @@ class DecisionEngine:
             confidence=ai_decision.confidence,
             reasoning=ai_decision.reasoning,
         )
+        decision_word = "OPERAR" if ai_decision.trade else "NO OPERAR"
+        logger.info(
+            "[%s] [IA] %s | conf=%.0f%% | %s",
+            symbol, decision_word, ai_decision.confidence * 100, ai_decision.reasoning,
+        )
         state.add_log(
-            f"IA: trade={ai_decision.trade} conf={ai_decision.confidence:.0%} | {ai_decision.reasoning}"
+            f"[IA] {decision_word} conf={ai_decision.confidence:.0%} | {ai_decision.reasoning}"
         )
 
         if not ai_decision.trade:

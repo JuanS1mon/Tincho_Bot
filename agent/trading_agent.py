@@ -148,7 +148,7 @@ class TradingAgent:
         # ── Paso 5-7: Evaluar señales y ejecutar trades ────────────────────────
         for symbol, signal in signals.items():
             if signal.signal == "NO_SIGNAL":
-                logger.info("[%s] Sin señal detectada.", symbol)
+                logger.info("[%s] Sin señal | %s", symbol, signal.reason)
                 continue
 
             logger.info(
