@@ -14,13 +14,16 @@ Endpoints:
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
-from tools.portfolio_tool import portfolio_tool
+from tools.portfolio_tool import portfolio_tool, Position
+from exchange.order_manager import order_manager
 from storage.trade_repository import trade_repository
 from storage.state_repository import state_repository
 from config.settings import settings
@@ -40,7 +43,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -164,3 +167,176 @@ async def get_trades(symbol: Optional[str] = None, limit: int = 20) -> Dict[str,
 @app.get("/health", summary="Health check")
 async def health() -> Dict[str, str]:
     return {"status": "ok", "service": "tincho-bot"}
+
+
+# ── Modelos para endpoints POST ───────────────────────────────────────────────
+
+class BullishRequest(BaseModel):
+    symbol: str
+    pct: float  # fracción del capital disponible, ej. 0.10 = 10%
+
+
+# ── POST /bullish ─────────────────────────────────────────────────────────────
+
+@app.post("/bullish", summary="Compra manual de meme coin")
+async def bullish_buy(req: BullishRequest) -> Dict[str, Any]:
+    """
+    Compra manualmente una moneda con un porcentaje del capital disponible.
+    No debe ser ninguno de los símbolos que ya monitorea el agente.
+    """
+    if not (0.01 <= req.pct <= 0.50):
+        raise HTTPException(status_code=400, detail="pct debe ser entre 0.01 y 0.50")
+
+    symbol = req.symbol.upper().strip()
+    if not symbol.endswith("USDT"):
+        symbol = symbol + "USDT"
+
+    if symbol in [s.upper() for s in settings.symbols]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{symbol} ya es monitoreado por el agente. Elegí otra moneda.",
+        )
+
+    available = portfolio_tool.available_capital
+    if available < 5.0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Capital insuficiente: {available:.2f} USDT disponibles",
+        )
+
+    capital_to_use = available * req.pct
+
+    # Precio actual de la moneda en futuros
+    try:
+        ticker = order_manager._client.safe_call(
+            order_manager._client.client.futures_symbol_ticker,
+            symbol=symbol,
+        )
+        price = float(ticker["price"])
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No se pudo obtener precio de {symbol}: {exc}",
+        )
+
+    if price <= 0:
+        raise HTTPException(status_code=400, detail=f"Precio inválido para {symbol}")
+
+    quantity = round(capital_to_use / price, 4)
+    if quantity <= 0:
+        raise HTTPException(status_code=400, detail="Cantidad calculada es 0")
+
+    leverage = 2
+    dry_run = _agent.dry_run if _agent is not None else True
+    order_id: Optional[str] = None
+
+    if not dry_run:
+        try:
+            order_manager.set_leverage(symbol, leverage)
+            order = order_manager.open_long(symbol, quantity, leverage)
+            order_id = str(order.get("orderId", "BULLISH"))
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error ejecutando orden en exchange: {exc}",
+            )
+    else:
+        order_id = "BULLISH_DRY"
+
+    stop_loss = round(price * 0.90, 8)
+    take_profit = round(price * 1.30, 8)
+
+    position = Position(
+        symbol=symbol,
+        direction="LONG",
+        entry_price=price,
+        quantity=quantity,
+        capital_used=round(capital_to_use, 4),
+        stop_loss=stop_loss,
+        take_profit=take_profit,
+        order_id=order_id,
+    )
+    portfolio_tool.open_position(position)
+
+    logger.info(
+        "🐂 BULLISH manual: %s @ %.6f | qty=%.4f | capital=%.2f USDT | dry_run=%s",
+        symbol, price, quantity, capital_to_use, dry_run,
+    )
+
+    return {
+        "status": "ok",
+        "symbol": symbol,
+        "direction": "LONG",
+        "entry_price": price,
+        "quantity": quantity,
+        "capital_used": round(capital_to_use, 2),
+        "leverage": leverage,
+        "stop_loss": stop_loss,
+        "take_profit": take_profit,
+        "dry_run": dry_run,
+    }
+
+
+# ── POST /bombarda ────────────────────────────────────────────────────────────
+
+@app.post("/bombarda", summary="Cierre de emergencia de todas las posiciones")
+async def bombarda() -> Dict[str, Any]:
+    """
+    Cierra TODAS las posiciones abiertas a precio de mercado de forma inmediata.
+    En modo real cancela las órdenes pendientes (SL/TP) antes de cerrar.
+    """
+    if not portfolio_tool.positions:
+        return {"status": "ok", "closed": [], "message": "No hay posiciones abiertas"}
+
+    dry_run = _agent.dry_run if _agent is not None else True
+    closed = []
+    errors = []
+
+    for symbol, pos in portfolio_tool.positions.copy().items():
+        # Precio actual: usar snapshot del agente o fetchear del exchange
+        exit_price = pos.entry_price
+        if _agent is not None and symbol in _agent.state.market_snapshots:
+            exit_price = _agent.state.market_snapshots[symbol].price
+        else:
+            try:
+                ticker = order_manager._client.safe_call(
+                    order_manager._client.client.futures_symbol_ticker,
+                    symbol=symbol,
+                )
+                exit_price = float(ticker["price"])
+            except Exception:
+                pass  # fallback a entry_price
+
+        if not dry_run:
+            try:
+                # Cancelar órdenes pendientes (SL/TP) antes de cerrar
+                order_manager._client.safe_call(
+                    order_manager._client.client.futures_cancel_all_open_orders,
+                    symbol=symbol,
+                )
+                side = "BUY" if pos.direction == "LONG" else "SELL"
+                order_manager.close_position(symbol, side, pos.quantity)
+            except Exception as exc:
+                errors.append({"symbol": symbol, "error": str(exc)})
+                continue
+
+        trade = portfolio_tool.close_position(symbol, exit_price, strategy="BOMBARDA")
+        if trade:
+            closed.append({
+                "symbol": symbol,
+                "direction": pos.direction,
+                "entry_price": pos.entry_price,
+                "exit_price": exit_price,
+                "pnl": trade.pnl,
+                "pnl_pct": trade.pnl_pct,
+            })
+
+    logger.info("💣 BOMBARDA ejecutada: %d posición(es) cerrada(s) | dry_run=%s", len(closed), dry_run)
+
+    return {
+        "status": "ok",
+        "closed": closed,
+        "errors": errors,
+        "dry_run": dry_run,
+        "message": f"{len(closed)} posición(es) cerrada(s)",
+    }
