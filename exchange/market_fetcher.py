@@ -178,7 +178,12 @@ class MarketFetcher:
         """
         Fetch forced liquidation orders (allForceOrders).
         Retorna lista con side, price, qty, time.
+        Nota: en testnet este endpoint no está disponible (retorna -2015).
         """
+        # En testnet el endpoint de liquidaciones no existe — omitir silenciosamente
+        if settings.binance_testnet:
+            return []
+
         try:
             raw = self._client.safe_call(
                 self._client.client.futures_coin_liquidation_orders,
