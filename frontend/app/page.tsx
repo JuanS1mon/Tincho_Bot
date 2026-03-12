@@ -129,8 +129,8 @@ function PnlValue({ value }: { value: number }) {
 
 function Card({ title, children, className = "" }: { title: string; children: React.ReactNode; className?: string }) {
   return (
-    <div className={`rounded-xl border border-[var(--border)] bg-[var(--card)] p-5 ${className}`}>
-      <h2 className="text-xs font-semibold uppercase tracking-widest text-[var(--muted)] mb-4">{title}</h2>
+    <div className={`rounded-xl border border-[var(--border)] bg-[var(--card)] p-5 lg:p-6 ${className}`}>
+      <h2 className="text-xs font-semibold uppercase tracking-widest text-[var(--muted)] mb-4 lg:mb-5">{title}</h2>
       {children}
     </div>
   );
@@ -139,8 +139,8 @@ function Card({ title, children, className = "" }: { title: string; children: Re
 function Stat({ label, value, sub }: { label: string; value: React.ReactNode; sub?: string }) {
   return (
     <div>
-      <div className="text-xs text-[var(--muted)] mb-0.5">{label}</div>
-      <div className="text-lg font-semibold leading-tight">{value}</div>
+      <div className="text-xs lg:text-sm text-[var(--muted)] mb-0.5">{label}</div>
+      <div className="text-lg lg:text-xl font-semibold leading-tight">{value}</div>
       {sub && <div className="text-xs text-[var(--muted)] mt-0.5">{sub}</div>}
     </div>
   );
@@ -475,12 +475,12 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-[var(--bg)]">
       {/* Header */}
-      <header className="border-b border-[var(--border)] px-6 py-4 flex items-center justify-between sticky top-0 z-10 bg-[var(--bg)]/90 backdrop-blur-sm">
+      <header className="border-b border-[var(--border)] px-6 py-4 flex items-center justify-between sticky top-0 z-10 bg-[var(--bg)]/90 backdrop-blur-sm w-full">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold text-sm select-none">T</div>
+          <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold text-base select-none">T</div>
           <div>
-            <h1 className="text-base font-semibold tracking-tight">Tincho Bot</h1>
-            <p className="text-[11px] text-[var(--muted)]">Autonomous Trading Agent</p>
+            <h1 className="text-lg font-semibold tracking-tight">Tincho Bot</h1>
+            <p className="text-xs text-[var(--muted)]">Autonomous Trading Agent</p>
           </div>
         </div>
         <div className="flex items-center gap-3">
@@ -502,7 +502,7 @@ export default function Dashboard() {
       </header>
 
       {/* Main content — extra bottom padding for fixed action bar */}
-      <main className="max-w-7xl mx-auto px-4 py-6 space-y-6 pb-28">
+      <main className="w-full px-4 sm:px-6 lg:px-10 xl:px-16 py-6 space-y-6 pb-28">
 
         {!online && <OfflineBanner />}
 
@@ -517,7 +517,7 @@ export default function Dashboard() {
         {/* Portfolio Stats */}
         {port && (
           <Card title="Portafolio">
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-6">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-6 lg:gap-8">
               <Stat
                 label="Capital"
                 value={<span className="font-mono">{port.capital.toFixed(2)} USDT</span>}
@@ -549,7 +549,7 @@ export default function Dashboard() {
         {/* Open Positions */}
         {port && port.open_positions > 0 && (
           <Card title="Posiciones abiertas">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
               {Object.entries(port.positions).map(([sym, pos]) => (
                 <div key={sym} className="rounded-lg border border-[var(--border)] p-4 space-y-3">
                   <div className="flex items-center justify-between">
@@ -571,14 +571,14 @@ export default function Dashboard() {
 
         {/* Market Analysis */}
         {Object.keys(snapshots).length > 0 && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4">
             {Object.entries(snapshots).map(([sym, snap]) => {
               const sig = signals[sym];
               return (
                 <Card key={sym} title={sym}>
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
-                      <span className="text-2xl font-mono font-bold">
+                      <span className="text-2xl lg:text-3xl font-mono font-bold">
                         ${snap.price.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
                       <TrendBadge trend={snap.trend} />
@@ -621,7 +621,7 @@ export default function Dashboard() {
         {trades.length > 0 && (
           <Card title="Últimos trades">
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="w-full text-sm lg:text-base">
                 <thead>
                   <tr className="text-left text-xs text-[var(--muted)] border-b border-[var(--border)]">
                     <th className="pb-2 pr-4">Par</th>
@@ -669,7 +669,7 @@ export default function Dashboard() {
 
       {/* ── Fixed action bar ── */}
       <div className="fixed bottom-0 left-0 right-0 z-20 border-t border-[var(--border)] bg-[var(--bg)]/95 backdrop-blur-md px-4 py-3">
-        <div className="max-w-7xl mx-auto flex items-center gap-3">
+        <div className="w-full px-2 sm:px-6 lg:px-10 xl:px-16 flex items-center gap-3">
           {/* BULLISH */}
           <button
             onClick={() => setShowBullish(true)}
