@@ -213,6 +213,26 @@ class MarketFetcher:
             })
         return result
 
+    # ── Balance de cuenta ─────────────────────────────────────────────────────
+
+    def get_usdt_balance(self) -> Optional[float]:
+        """
+        Retorna el saldo USDT disponible en la cuenta Futures.
+        Retorna None si no se puede obtener (error de API, permisos, etc.).
+        """
+        try:
+            balances = self._client.safe_call(
+                self._client.client.futures_account_balance
+            )
+            for asset in balances:
+                if asset.get("asset") == "USDT":
+                    available = float(asset.get("availableBalance", 0))
+                    logger.info("Saldo USDT real en Futures: %.4f USDT", available)
+                    return available
+        except Exception as exc:
+            logger.warning("No se pudo obtener saldo de Binance: %s", exc)
+        return None
+
 
 # Instancia global
 market_fetcher = MarketFetcher()

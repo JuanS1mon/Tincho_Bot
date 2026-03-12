@@ -45,6 +45,9 @@ class TradingAgent:
         # Restaurar parámetros dinámicos desde MongoDB (ajustes previos de la IA)
         parameters_manager.load_from_db()
 
+        # Sincronizar capital con saldo real de Binance Futures
+        portfolio_tool.sync_from_exchange()
+
         # Configurar dry_run en el motor de decisión
         decision_engine.dry_run = dry_run
 
