@@ -50,6 +50,7 @@ class TradingAgent:
         self._prev_rsi: Dict[str, float] = {}
         self._prev_funding: Dict[str, float] = {}
         self._prev_price: Dict[str, float] = {}
+        self._calm_cycles: int = 0
 
         # Restaurar parámetros dinámicos desde MongoDB (ajustes previos de la IA)
         parameters_manager.load_from_db()
@@ -173,6 +174,9 @@ class TradingAgent:
                 decision_engine.market_overview_adjust(all_market_data, self.state)
             except Exception as exc:
                 error_logger.error("Error en market_overview_adjust: %s", exc)
+
+        # Si estamos en TRYHARD y el mercado se calma, bajar automáticamente a CHILL.
+        self._maybe_auto_switch_tryhard_to_chill(all_market_data, signals)
 
         for symbol, signal in signals.items():
             if signal.signal == "NO_SIGNAL":
@@ -723,6 +727,65 @@ class TradingAgent:
             self._prev_rsi[symbol] = float(data.get("rsi", 0.0) or 0.0)
             self._prev_funding[symbol] = float(data.get("funding_rate", 0.0) or 0.0)
             self._prev_price[symbol] = float(data.get("price", 0.0) or 0.0)
+
+    def _maybe_auto_switch_tryhard_to_chill(self, all_market_data: Dict[str, dict], signals: Dict[str, TradingSignal]) -> None:
+        """
+        En modo TRYHARD, baja a CHILL automáticamente cuando el mercado está calmo.
+
+        Criterio de calma (conservador):
+          - Sin señales activas en los símbolos monitoreados,
+          - RSI en zona media (42-58),
+          - funding bajo,
+          - sin posiciones abiertas (evita cambiar reglas a mitad de trade).
+        Requiere 2 ciclos consecutivos para confirmar.
+        """
+        p = parameters_manager.params
+        if not p.tryhard_mode:
+            self._calm_cycles = 0
+            return
+
+        if not all_market_data:
+            self._calm_cycles = 0
+            return
+
+        if portfolio_tool.positions:
+            self._calm_cycles = 0
+            return
+
+        no_active_signals = all(
+            (signals.get(sym).signal if sym in signals else "NO_SIGNAL") == "NO_SIGNAL"
+            for sym in all_market_data.keys()
+        )
+        rsi_calm = all(42.0 <= float(data.get("rsi", 0.0) or 0.0) <= 58.0 for data in all_market_data.values())
+        funding_calm = all(abs(float(data.get("funding_rate", 0.0) or 0.0)) <= 0.01 for data in all_market_data.values())
+
+        if no_active_signals and rsi_calm and funding_calm:
+            self._calm_cycles += 1
+        else:
+            self._calm_cycles = 0
+            return
+
+        if self._calm_cycles < 2:
+            return
+
+        # Preset CHILL automático
+        changed = parameters_manager.apply_adjustments(
+            {
+                "leverage": 10,
+                "stop_loss": 0.03,
+                "take_profit": 0.00,
+                "max_capital_per_trade": 0.35,
+                "risk_per_trade": 0.02,
+            },
+            reason="Auto switch TRYHARD→CHILL por mercado calmo",
+        )
+
+        p.tryhard_mode = False
+        self._calm_cycles = 0
+
+        msg = "🔄 Auto-modo: TRYHARD → CHILL (mercado calmo detectado)"
+        logger.info(msg + (" | parámetros actualizados" if changed else " | sin cambios numéricos"))
+        self.state.add_log(msg)
 
     # ── Persistencia de estado ────────────────────────────────────────────────
 
