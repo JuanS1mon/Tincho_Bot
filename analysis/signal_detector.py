@@ -41,11 +41,12 @@ class SignalDetector:
         indicators: Indicators,
         volume_analysis: VolumeAnalysis,
         oi_analysis: OIAnalysis,
+        rsi_momentum: float = 0.0,
     ) -> TradingSignal:
         """Evalúa ambas estrategias y retorna la señal de mayor prioridad."""
 
         # 1. Intentar señal pullback
-        pullback = self._pullback_signal(indicators, volume_analysis, oi_analysis)
+        pullback = self._pullback_signal(indicators, volume_analysis, oi_analysis, rsi_momentum)
         if pullback.signal != "NO_SIGNAL":
             return pullback
 
@@ -60,6 +61,7 @@ class SignalDetector:
         ind: Indicators,
         vol: VolumeAnalysis,
         oi: OIAnalysis,
+        rsi_momentum: float = 0.0,
     ) -> TradingSignal:
         p = parameters_manager.params
         trend = trend_detector.detect(ind)
@@ -68,18 +70,41 @@ class SignalDetector:
         oi_rising = oi.trend == "INCREASING"
         vol_ok = vol.trend == "INCREASING" or vol.is_high_volume
 
+        # ── TRYHARD: relaja filtros de volumen, proximidad y OI ───────────────
+        if p.tryhard_mode:
+            vol_ok = vol.volume_ratio >= 0.15         # acepta volumen bajo — solo filtra ausencia total
+            proximity_ok = True                        # sin restricción de distancia
+            oi_rising = oi.trend in ("INCREASING", "STABLE")  # capitulación también válida
+        else:
+            proximity_ok = proximity <= p.sma20_proximity_pct
+
+        # ── Ajuste dinámico del umbral RSI por momentum ───────────────────────
+        # Si el RSI viene subiendo al menos 5 puntos Y no está en sobrecompra,
+        # se reduce el umbral de entrada para aprovechar el impulso.
+        effective_long_threshold = p.rsi_long_threshold
+        momentum_str = ""
+        if rsi_momentum >= 5.0 and ind.rsi <= p.rsi_overbought:
+            reduction = min(rsi_momentum * 0.4, p.rsi_momentum_boost)
+            effective_long_threshold = max(35.0, p.rsi_long_threshold - reduction)
+            momentum_str = f" [RSI↑ momentum=+{rsi_momentum:.1f} → umbral={effective_long_threshold:.1f}]"
+        elif rsi_momentum <= -5.0:
+            # RSI cayendo → más conservador para LONG
+            increase = min(abs(rsi_momentum) * 0.3, p.rsi_momentum_boost / 2)
+            effective_long_threshold = min(65.0, p.rsi_long_threshold + increase)
+            momentum_str = f" [RSI↓ momentum={rsi_momentum:.1f} → umbral={effective_long_threshold:.1f}]"
+
         # ── LONG ─────────────────────────────────────────────────────────────
         if (
             trend == Trend.BULLISH
-            and proximity <= p.sma20_proximity_pct
-            and ind.rsi > p.rsi_long_threshold
+            and proximity_ok
+            and ind.rsi > effective_long_threshold
             and vol_ok
             and oi_rising
         ):
             score = self._count_conditions(
                 trend == Trend.BULLISH,
-                proximity <= p.sma20_proximity_pct,
-                ind.rsi > p.rsi_long_threshold + 5,
+                proximity_ok,
+                ind.rsi > effective_long_threshold + 5,
                 vol.is_high_volume,
                 oi_rising,
             )
@@ -89,23 +114,23 @@ class SignalDetector:
                 confidence=round(score / 5, 2),
                 reason=(
                     f"Tendencia BULLISH | precio {proximity*100:.2f}% de SMA20 "
-                    f"(max {p.sma20_proximity_pct*100:.1f}%) | "
-                    f"RSI={ind.rsi:.1f}>{p.rsi_long_threshold} | "
-                    f"Volumen {vol.trend} | OI {oi.trend}"
+                    f"(max {'TRYHARD' if p.tryhard_mode else f'{p.sma20_proximity_pct*100:.1f}%'}) | "
+                    f"RSI={ind.rsi:.1f}>{effective_long_threshold:.1f}{momentum_str} | "
+                    f"Volumen {vol.trend} ({vol.volume_ratio:.2f}x) | OI {oi.trend}"
                 ),
             )
 
         # ── SHORT ─────────────────────────────────────────────────────────────
         if (
             trend == Trend.BEARISH
-            and proximity <= p.sma20_proximity_pct
+            and proximity_ok
             and ind.rsi < p.rsi_short_threshold
             and vol_ok
             and oi_rising
         ):
             score = self._count_conditions(
                 trend == Trend.BEARISH,
-                proximity <= p.sma20_proximity_pct,
+                proximity_ok,
                 ind.rsi < p.rsi_short_threshold - 5,
                 vol.is_high_volume,
                 oi_rising,
@@ -116,24 +141,25 @@ class SignalDetector:
                 confidence=round(score / 5, 2),
                 reason=(
                     f"Tendencia BEARISH | precio {proximity*100:.2f}% de SMA20 "
-                    f"(max {p.sma20_proximity_pct*100:.1f}%) | "
+                    f"(max {'TRYHARD' if p.tryhard_mode else f'{p.sma20_proximity_pct*100:.1f}%'}) | "
                     f"RSI={ind.rsi:.1f}<{p.rsi_short_threshold} | "
-                    f"Volumen {vol.trend} | OI {oi.trend}"
+                    f"Volumen {vol.trend} ({vol.volume_ratio:.2f}x) | OI {oi.trend}"
                 ),
             )
 
         # Construir razón detallada del NO_SIGNAL
         missing = []
-        if proximity > p.sma20_proximity_pct:
+        if not proximity_ok:
             missing.append(f"precio lejos de SMA20 ({proximity*100:.2f}% > {p.sma20_proximity_pct*100:.1f}%)")
-        if trend == Trend.BULLISH and ind.rsi <= p.rsi_long_threshold:
-            missing.append(f"RSI insuficiente ({ind.rsi:.1f} <= {p.rsi_long_threshold})")
+        if trend == Trend.BULLISH and ind.rsi <= effective_long_threshold:
+            missing.append(f"RSI insuficiente ({ind.rsi:.1f} <= {effective_long_threshold:.1f}{momentum_str})")
         if trend == Trend.BEARISH and ind.rsi >= p.rsi_short_threshold:
             missing.append(f"RSI insuficiente ({ind.rsi:.1f} >= {p.rsi_short_threshold})")
         if not vol_ok:
             missing.append("volumen bajo")
         if not oi_rising:
-            missing.append(f"OI {oi.trend} (necesita INCREASING)")
+            needed = "INCREASING o STABLE" if p.tryhard_mode else "INCREASING"
+            missing.append(f"OI {oi.trend} (necesita {needed})")
         if trend == Trend.NEUTRAL:
             missing.append("tendencia NEUTRAL (necesita BULLISH o BEARISH)")
 

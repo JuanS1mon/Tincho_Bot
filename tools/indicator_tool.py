@@ -2,7 +2,7 @@
 tools/indicator_tool.py
 =======================
 Calcula indicadores técnicos sobre un DataFrame OHLCV:
-  - SMA20, SMA50
+  - SMA20, SMA50, SMA100
   - RSI (14 períodos)
   - MACD (12, 26, 9)
   - Volumen promedio (20 períodos)
@@ -20,6 +20,7 @@ import ta
 class Indicators:
     sma20: float
     sma50: float
+    sma100: float
     rsi: float
     macd: float
     macd_signal: float
@@ -38,7 +39,7 @@ class IndicatorTool:
         y retorna el último valor de cada indicador calculado.
         Retorna None si no hay suficientes datos.
         """
-        if len(df) < 50:
+        if len(df) < 120:
             return None
 
         close = df["close"]
@@ -47,6 +48,7 @@ class IndicatorTool:
         # ── SMA ──────────────────────────────────────────────────────────────
         sma20_series = ta.trend.sma_indicator(close, window=20)
         sma50_series = ta.trend.sma_indicator(close, window=50)
+        sma100_series = ta.trend.sma_indicator(close, window=100)
 
         # ── RSI ───────────────────────────────────────────────────────────────
         rsi_series = ta.momentum.rsi(close, window=14)
@@ -63,6 +65,7 @@ class IndicatorTool:
         return Indicators(
             sma20=round(float(sma20_series.iloc[-1]), 4),
             sma50=round(float(sma50_series.iloc[-1]), 4),
+            sma100=round(float(sma100_series.iloc[-1]), 4),
             rsi=round(float(rsi_series.iloc[-1]), 2),
             macd=round(float(macd_line.iloc[-1]), 6),
             macd_signal=round(float(macd_signal.iloc[-1]), 6),

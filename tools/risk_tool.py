@@ -23,6 +23,7 @@ class RiskParams:
     rejection_reason: str
     quantity: float          # cantidad en contratos/monedas
     capital_to_use: float    # USDT a utilizar
+    entry_price: float       # precio de entrada real
     stop_loss_price: float
     take_profit_price: float
     trailing_callback_pct: float
@@ -117,6 +118,7 @@ class RiskTool:
             rejection_reason="",
             quantity=round(quantity, 4),
             capital_to_use=round(capital_to_use, 2),
+            entry_price=round(entry_price, 6),
             stop_loss_price=round(sl_price, 4),
             take_profit_price=round(tp_price, 4),
             trailing_callback_pct=self.trailing_callback_pct,
@@ -142,6 +144,7 @@ class RiskTool:
             quantity=0,
             capital_to_use=0,
             stop_loss_price=0,
+            entry_price=0.0,
             take_profit_price=0,
             trailing_callback_pct=0,
             risk_reward_ratio=0,

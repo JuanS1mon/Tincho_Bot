@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
+import dynamic from "next/dynamic";
+const MarquitosChat = dynamic(() => import("./MarquitosChat"), { ssr: false });
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -19,10 +21,13 @@ interface Portfolio {
 interface Position {
   direction: string;
   entry_price: number;
+  current_price: number;
   quantity: number;
   capital_used: number;
   stop_loss: number;
   take_profit: number;
+  unrealized_pnl: number;
+  unrealized_pnl_pct: number;
 }
 
 interface MarketSnapshot {
@@ -187,21 +192,19 @@ function OfflineBanner() {
 function TradingAlert({ count, positions }: { count: number; positions: Record<string, Position> }) {
   const symbols = Object.keys(positions).join(", ");
   return (
-    <div className="rounded-xl border border-green-500/40 bg-green-500/10 overflow-hidden">
-      <div className="flex items-center gap-4 p-4">
+    <div className="rounded-2xl border-2 border-green-500/60 bg-green-500/10 shadow-lg shadow-green-500/20 overflow-hidden">
+      <div className="flex flex-col sm:flex-row items-center gap-6 p-8">
         <div className="flex-shrink-0">
-          <img src="/trading.gif" alt="Operando" className="h-16 w-16 rounded-lg object-cover" />
+          <img src="/trading.gif" alt="Operando" className="h-40 w-40 rounded-2xl object-cover shadow-md" />
         </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1">
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-bold bg-green-500/20 text-green-300 border border-green-500/40 animate-pulse">
-              🚀 OPERANDO
-            </span>
-            <span className="text-sm font-semibold text-green-400">
-              {count} posición{count !== 1 ? "es" : ""} activa{count !== 1 ? "s" : ""}
-            </span>
-          </div>
-          <p className="text-xs text-green-300/70 truncate font-mono">{symbols}</p>
+        <div className="flex-1 min-w-0 text-center sm:text-left">
+          <span className="inline-flex items-center gap-2 px-5 py-2 rounded-full text-xl font-black bg-green-500/20 text-green-300 border-2 border-green-500/50 animate-pulse mb-3">
+            🚀 OPERANDO
+          </span>
+          <p className="text-3xl font-bold text-green-300 mt-2">
+            {count} posición{count !== 1 ? "es" : ""} activa{count !== 1 ? "s" : ""}
+          </p>
+          <p className="text-lg text-green-300/60 font-mono mt-1 truncate">{symbols}</p>
         </div>
       </div>
     </div>
@@ -212,22 +215,20 @@ function TradingAlert({ count, positions }: { count: number; positions: Record<s
 
 function NoSignalAlert({ reasons }: { reasons: { symbol: string; reason: string }[] }) {
   return (
-    <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 overflow-hidden">
-      <div className="flex gap-4 p-4">
+    <div className="rounded-2xl border-2 border-amber-500/50 bg-amber-500/8 shadow-lg shadow-amber-500/10 overflow-hidden">
+      <div className="flex flex-col sm:flex-row items-center gap-6 p-8">
         <div className="flex-shrink-0">
-          <img src="/no-trading.gif" alt="Sin operaciones" className="h-16 w-16 rounded-lg object-cover" />
+          <img src="/no-trading.gif" alt="Sin operaciones" className="h-40 w-40 rounded-2xl object-cover shadow-md" />
         </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-2">
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30">
-              ⏸ SIN SEÑAL
-            </span>
-            <span className="text-xs text-amber-400/60">Monitoreando mercado</span>
-          </div>
-          <div className="space-y-0.5">
+        <div className="flex-1 min-w-0 text-center sm:text-left">
+          <span className="inline-flex items-center gap-2 px-5 py-2 rounded-full text-xl font-black bg-amber-500/15 text-amber-300 border-2 border-amber-500/40 mb-3">
+            ⏸ SIN SEÑAL
+          </span>
+          <p className="text-2xl font-bold text-amber-300/80 mt-2">Monitoreando mercado</p>
+          <div className="mt-3 space-y-1.5">
             {reasons.map(({ symbol, reason }) => (
-              <p key={symbol} className="text-xs text-amber-200/60 leading-snug">
-                <span className="text-amber-300/80 font-medium">{symbol}:</span> {reason}
+              <p key={symbol} className="text-base text-amber-200/60 leading-snug">
+                <span className="text-amber-300/90 font-semibold">{symbol}:</span> {reason}
               </p>
             ))}
           </div>
@@ -252,8 +253,8 @@ interface BullishResult {
   dry_run: boolean;
 }
 
-function BullishModal({ availableCapital, onClose }: { availableCapital: number; onClose: () => void }) {
-  const [symbol, setSymbol] = useState("");
+function BullishModal({ availableCapital, onClose, initialSymbol = "" }: { availableCapital: number; onClose: () => void; initialSymbol?: string }) {
+  const [symbol, setSymbol] = useState(initialSymbol);
   const [pct, setPct] = useState(10);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<BullishResult | null>(null);
@@ -410,6 +411,267 @@ function BombardaConfirm({ posCount, onClose, onConfirm, loading, result }: {
   );
 }
 
+// ── Tincho2 Chat ──────────────────────────────────────────────────────────────
+
+interface T2Message {
+  role: "user" | "assistant" | "system";
+  content: string;
+  bullishSymbol?: string;
+  paramsApplied?: Record<string, unknown>;
+}
+
+const PARAM_LABELS: Record<string, string> = {
+  leverage: "Leverage",
+  stop_loss: "Stop Loss",
+  take_profit: "Take Profit",
+  max_capital_per_trade: "Capital por trade",
+  risk_per_trade: "Riesgo por trade",
+  timeframe: "Timeframe",
+};
+
+function formatParamValue(key: string, val: unknown): string {
+  if (key === "leverage") return `${val}x`;
+  if (key === "timeframe") return String(val);
+  if (typeof val === "number") return `${(val * 100).toFixed(1)}%`;
+  return String(val);
+}
+
+const QUICK_QUESTIONS = [
+  "¿Cómo van las inversiones?",
+  "¿Qué moneda me recomendás?",
+  "¿Es buen momento para comprar?",
+  "¿Cómo está el riesgo actual?",
+];
+
+// Extrae símbolo de etiqueta [BULLISH:XXX] si existe en el texto
+function extractBullishTag(text: string): string | null {
+  const m = text.match(/\[BULLISH:([A-Z0-9]+)\]/);
+  return m ? m[1] : null;
+}
+
+// Limpia la etiqueta del texto visible
+function cleanBullishTag(text: string): string {
+  return text.replace(/\s*\[BULLISH:[A-Z0-9]+\]/g, "").trim();
+}
+
+function Tincho2Chat({
+  agentStatus,
+  isOpen,
+  onToggle,
+  onBullishRecommend,
+}: {
+  agentStatus: AgentStatus | null;
+  isOpen: boolean;
+  onToggle: () => void;
+  onBullishRecommend: (symbol: string) => void;
+}) {
+  const [history, setHistory] = useState<T2Message[]>([]);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Scroll al último mensaje
+  useEffect(() => {
+    if (isOpen) messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [history, isOpen, loading]);
+
+  // Focus input al abrir
+  useEffect(() => {
+    if (isOpen) setTimeout(() => inputRef.current?.focus(), 100);
+  }, [isOpen]);
+
+  async function sendMessage(text: string) {
+    if (!text.trim() || loading) return;
+    const userMsg: T2Message = { role: "user", content: text.trim() };
+    const newHistory = [...history, userMsg];
+    setHistory(newHistory);
+    setInput("");
+    setLoading(true);
+
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: userMsg.content,
+          history: history.map(m => ({ role: m.role, content: m.content })),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setHistory(h => [...h, { role: "assistant", content: `❌ Error: ${data.detail ?? "no response"}` }]);
+      } else {
+        const reply: string = data.reply;
+        const bullishSym = extractBullishTag(reply);
+        const cleanReply = cleanBullishTag(reply);
+        const paramsApplied = data.paramsApplied ?? undefined;
+        setHistory(h => [...h, { role: "assistant", content: cleanReply, bullishSymbol: bullishSym ?? undefined, paramsApplied } as T2Message]);
+      }
+    } catch {
+      setHistory(h => [...h, { role: "assistant", content: "❌ No pude conectarme con el servidor. ¿Está corriendo el bot?" }]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <>
+      {/* Floating toggle button */}
+      <button
+        onClick={onToggle}
+        title="Hablar con Tincho2"
+        className="fixed bottom-48 right-4 z-40 w-14 h-14 rounded-full shadow-xl transition-all duration-150 active:scale-95 flex items-center justify-center text-2xl relative"
+        style={{
+          background: isOpen
+            ? "radial-gradient(circle at 35% 35%, #c084fc, #9333ea 60%, #581c87)"
+            : "radial-gradient(circle at 35% 35%, #a78bfa, #7c3aed 60%, #3b0764)",
+          boxShadow: "0 6px 0 #3b0764, 0 10px 20px rgba(124,58,237,0.5), inset 0 2px 4px rgba(255,255,255,0.2)",
+        } as React.CSSProperties}
+      >
+        {isOpen ? "✕" : "🤖"}
+        {!isOpen && history.length === 0 && (
+          <span className="absolute top-0.5 right-0.5 w-3 h-3 rounded-full bg-purple-300 border-2 border-[var(--bg)] animate-ping" />
+        )}
+      </button>
+
+      {/* Chat panel */}
+      {isOpen && (
+        <div className="fixed bottom-[13rem] right-4 z-40 w-[22rem] max-h-[520px] rounded-2xl border border-purple-500/30 bg-[var(--card)] shadow-2xl shadow-purple-500/20 flex flex-col overflow-hidden">
+
+          {/* Header */}
+          <div className="px-4 py-3 border-b border-[var(--border)] bg-purple-500/8 flex items-center gap-3 flex-shrink-0">
+            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-purple-500 to-violet-700 flex items-center justify-center text-lg flex-shrink-0 select-none shadow-md">🤖</div>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-bold text-purple-200">Tincho2</div>
+              <div className="text-[10px] text-purple-300/60">
+                {agentStatus ? `Ciclo #${agentStatus.cycle} · ${agentStatus.dry_run ? "DRY-RUN" : "LIVE"}` : "Asesor IA"}
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              {history.length > 0 && (
+                <button
+                  onClick={() => setHistory([])}
+                  title="Limpiar chat"
+                  className="text-[10px] text-purple-400/60 hover:text-purple-300 px-1.5 py-0.5 rounded hover:bg-purple-500/10 transition-colors"
+                >
+                  limpiar
+                </button>
+              )}
+              <div className="w-2 h-2 rounded-full bg-purple-400 animate-pulse" />
+            </div>
+          </div>
+
+          {/* Messages area */}
+          <div className="flex-1 overflow-y-auto p-3 space-y-3 min-h-0">
+
+            {/* Mensaje de bienvenida */}
+            {history.length === 0 && (
+              <div className="space-y-3">
+                <div className="flex gap-2 items-start">
+                  <div className="w-7 h-7 rounded-full bg-purple-600/30 flex items-center justify-center text-sm flex-shrink-0 mt-0.5">🤖</div>
+                  <div className="rounded-2xl rounded-tl-none px-3 py-2.5 text-xs bg-purple-500/10 border border-purple-500/20 flex-1 text-[var(--text)] leading-relaxed">
+                    ¡Hola! Soy Tincho2, tu asesor de trading. Tengo acceso al estado actual del bot y el mercado en tiempo real. ¿En qué te puedo ayudar?
+                  </div>
+                </div>
+                {/* Quick questions */}
+                <div className="pl-9 flex flex-wrap gap-1.5">
+                  {QUICK_QUESTIONS.map(q => (
+                    <button
+                      key={q}
+                      onClick={() => sendMessage(q)}
+                      className="text-[10px] px-2 py-1 rounded-full border border-purple-500/30 text-purple-300/80 hover:bg-purple-500/15 hover:text-purple-200 hover:border-purple-400/50 transition-all"
+                    >
+                      {q}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Historial */}
+            {history.map((msg, i) => (
+              <div key={i} className={`flex gap-2 items-start ${msg.role === "user" ? "flex-row-reverse" : ""}`}>
+                {msg.role === "assistant" && (
+                  <div className="w-7 h-7 rounded-full bg-purple-600/30 flex items-center justify-center text-sm flex-shrink-0 mt-0.5">🤖</div>
+                )}
+                <div className={`flex flex-col gap-2 max-w-[82%] ${msg.role === "user" ? "items-end ml-auto" : "items-start"}`}>
+                  <div
+                    className={`rounded-2xl px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap ${
+                      msg.role === "user"
+                        ? "rounded-tr-none bg-purple-600/25 border border-purple-500/30 text-purple-100"
+                        : "rounded-tl-none bg-[var(--bg)] border border-[var(--border)] text-[var(--text)]"
+                    }`}
+                  >
+                    {msg.content}
+                  </div>
+                  {msg.bullishSymbol && (
+                    <button
+                      onClick={() => { onBullishRecommend(msg.bullishSymbol!); }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-green-500/15 border border-green-500/40 text-green-300 text-[11px] font-bold hover:bg-green-500/25 hover:border-green-400/60 transition-all active:scale-95"
+                    >
+                      🐂 Comprar {msg.bullishSymbol} con BULLISH
+                    </button>
+                  )}
+                  {msg.paramsApplied && (
+                    <div className="rounded-xl bg-orange-500/10 border border-orange-500/30 px-3 py-2.5 space-y-1.5">
+                      <div className="text-[10px] font-bold text-orange-300 flex items-center gap-1">⚙️ Parámetros actualizados</div>
+                      {Object.entries(msg.paramsApplied).map(([k, v]) => (
+                        <div key={k} className="flex justify-between text-[10px]">
+                          <span className="text-orange-300/70">{PARAM_LABELS[k] ?? k}</span>
+                          <span className="font-mono font-semibold text-orange-200">{formatParamValue(k, v)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+
+            {/* Typing indicator */}
+            {loading && (
+              <div className="flex gap-2 items-start">
+                <div className="w-7 h-7 rounded-full bg-purple-600/30 flex items-center justify-center text-sm flex-shrink-0 mt-0.5">🤖</div>
+                <div className="rounded-2xl rounded-tl-none px-3 py-2.5 bg-[var(--bg)] border border-[var(--border)] flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-bounce" style={{ animationDelay: "0ms" } as React.CSSProperties} />
+                  <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-bounce" style={{ animationDelay: "150ms" } as React.CSSProperties} />
+                  <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-bounce" style={{ animationDelay: "300ms" } as React.CSSProperties} />
+                </div>
+              </div>
+            )}
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* Input */}
+          <div className="p-3 border-t border-[var(--border)] flex-shrink-0">
+            <form
+              onSubmit={e => { e.preventDefault(); sendMessage(input); }}
+              className="flex gap-2 items-center"
+            >
+              <input
+                ref={inputRef}
+                type="text"
+                value={input}
+                onChange={e => setInput(e.target.value)}
+                placeholder="Preguntale algo a Tincho2..."
+                disabled={loading}
+                className="flex-1 px-3 py-2 rounded-xl bg-white/5 border border-[var(--border)] text-xs text-[var(--text)] placeholder-[var(--muted)] focus:outline-none focus:border-purple-500/50 disabled:opacity-50 transition-all"
+              />
+              <button
+                type="submit"
+                disabled={loading || !input.trim()}
+                className="w-8 h-8 rounded-xl bg-purple-600 hover:bg-purple-500 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center transition-all active:scale-95 flex-shrink-0 text-white text-sm"
+              >
+                ↑
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 // ── Main Dashboard ────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
@@ -420,9 +682,34 @@ export default function Dashboard() {
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [online, setOnline]         = useState(true);
   const [showBullish, setShowBullish] = useState(false);
+  const [bullishPrefill, setBullishPrefill] = useState("");
   const [showBombarda, setShowBombarda] = useState(false);
   const [bombarding, setBombarding] = useState(false);
   const [bombardaResult, setBombardaResult] = useState<BombardaResult | null>(null);
+  const [showAiChat, setShowAiChat] = useState(false);
+  const [showMarquitos, setShowMarquitos] = useState(false);
+  const [marquitosActive, setMarquitosActive] = useState(false);
+  const [marquitosState, setMarquitosState] = useState<{
+    capital: number; initial_capital: number; total_pnl: number;
+    trades_won: number; trades_total: number;
+    awaiting_capital?: boolean;
+    last_ai_decision?: string;
+    position: {
+      symbol: string;
+      entry_price: number;
+      current_price: number;
+      take_profit_price: number;
+      stop_loss_price: number;
+      quantity: number;
+      open_time: number;
+      pnl: number;
+      pnl_pct: number;
+      change_pct_24h: number;
+      category: string;
+      capital_used: number;
+    } | null;
+  } | null>(null);
+  const [params, setParams] = useState<any | null>(null);
 
   const refresh = useCallback(async () => {
     const [p, m, a, t] = await Promise.all([
@@ -443,7 +730,16 @@ export default function Dashboard() {
   useEffect(() => {
     refresh();
     const id = setInterval(refresh, 5000);
-    return () => clearInterval(id);
+    // Fetch parámetros actuales
+    const fetchParams = async () => {
+      try {
+        const res = await fetch("/api/parameters");
+        if (res.ok) setParams(await res.json());
+      } catch {}
+    };
+    fetchParams();
+    const pid = setInterval(fetchParams, 7000);
+    return () => { clearInterval(id); clearInterval(pid); };
   }, [refresh]);
 
   const port = portfolio?.portfolio;
@@ -471,6 +767,34 @@ export default function Dashboard() {
       setBombarding(false);
     }
   }
+
+  useEffect(() => {
+    const fetchStatus = async () => {
+      try {
+        const res = await fetch("/api/marquitos/status");
+        if (res.ok) {
+          const data = await res.json();
+          setMarquitosActive(!!data.active);
+        }
+      } catch {}
+    };
+    fetchStatus();
+    const id = setInterval(fetchStatus, 4000);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    if (!marquitosActive) { setMarquitosState(null); return; }
+    const fetchMarqState = async () => {
+      try {
+        const res = await fetch("/api/marquitos/state");
+        if (res.ok) setMarquitosState(await res.json());
+      } catch {}
+    };
+    fetchMarqState();
+    const id = setInterval(fetchMarqState, 3000);
+    return () => clearInterval(id);
+  }, [marquitosActive]);
 
   return (
     <div className="min-h-screen bg-[var(--bg)]">
@@ -501,10 +825,138 @@ export default function Dashboard() {
         </div>
       </header>
 
+      {/* Parámetros actuales de trading */}
+      {params && (
+        <div className="w-full px-4 sm:px-6 lg:px-10 xl:px-16 pt-3 pb-1">
+          <div className="text-xs text-orange-300 font-mono bg-orange-900/10 border border-orange-500/20 rounded-lg px-4 py-2 mb-2">
+            <b>Parámetros actuales:</b> &nbsp;
+            leverage: <span className="font-bold">{params.leverage}x</span> &nbsp;|
+            max_capital: <span className="font-bold">{(params.max_capital_per_trade * 100).toFixed(1)}%</span> &nbsp;|
+            stop_loss: <span className="font-bold">{(params.stop_loss * 100).toFixed(2)}%</span> &nbsp;|
+            take_profit: <span className="font-bold">{(params.take_profit * 100).toFixed(2)}%</span> &nbsp;|
+            riesgo: <span className="font-bold">{(params.risk_per_trade * 100).toFixed(2)}%</span> &nbsp;|
+            timeframe: <span className="font-bold">{params.timeframe}</span> &nbsp;|
+            intervalo: <span className="font-bold">{params.analysis_interval_seconds}s</span>
+          </div>
+        </div>
+      )}
+
       {/* Main content — extra bottom padding for fixed action bar */}
       <main className="w-full px-4 sm:px-6 lg:px-10 xl:px-16 py-6 space-y-6 pb-28">
 
         {!online && <OfflineBanner />}
+
+        {/* ── Marquitos Status + Posición activa ── */}
+        {marquitosActive && (
+          <div className="space-y-3">
+            {/* Status bar */}
+            <div className="rounded-2xl border border-red-500/50 bg-red-950/30 px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-3 shadow-lg shadow-red-500/10">
+              <div className="flex items-center gap-3 flex-1 min-w-0">
+                <span className="text-2xl select-none">🔥</span>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-bold text-red-300">Marquitos activo</span>
+                    <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse inline-block" />
+                  </div>
+                  {marquitosState?.awaiting_capital && (
+                    <div className="text-xs text-orange-300 mt-0.5">⏳ Esperando capital — decile cuánto en el chat</div>
+                  )}
+                  {marquitosState && !marquitosState.awaiting_capital && !marquitosState.position && (
+                    <div className="text-xs text-red-300/70 mt-0.5">🔍 Escaneando mercado...</div>
+                  )}
+                  {marquitosState?.position && (
+                    <div className="text-xs text-orange-200 mt-0.5 font-mono">
+                      📈 <span className="font-bold text-orange-300">{marquitosState.position.symbol}</span>
+                      {" "}→ TP: +0.8% | SL: -0.3%
+                    </div>
+                  )}
+                </div>
+              </div>
+              {marquitosState && (
+                <div className="flex gap-4 text-xs font-mono text-red-300/80 flex-wrap">
+                  <span>Capital: <span className="text-red-200 font-bold">{marquitosState.capital.toFixed(2)} USDT</span></span>
+                  <span>PnL: <span className={marquitosState.total_pnl >= 0 ? "text-green-400 font-bold" : "text-red-400 font-bold"}>{marquitosState.total_pnl >= 0 ? "+" : ""}{marquitosState.total_pnl.toFixed(4)} USDT</span></span>
+                  <span>Trades: <span className="text-red-200">{marquitosState.trades_won}/{marquitosState.trades_total}</span></span>
+                </div>
+              )}
+            </div>
+
+            {/* Tarjeta de posición activa */}
+            {marquitosState?.position && (() => {
+              const p = marquitosState.position;
+              const pnl = p.pnl ?? 0;
+              const pnlPct = p.pnl_pct ?? 0;
+              const pnlColor = pnl > 0 ? "text-green-400" : pnl < 0 ? "text-red-400" : "text-slate-400";
+              const pnlBg = pnl > 0 ? "bg-green-500/8 border-green-500/25" : pnl < 0 ? "bg-red-500/8 border-red-500/25" : "bg-white/5 border-[var(--border)]";
+              const currentPrice = p.current_price ?? p.entry_price;
+              const range = p.take_profit_price - p.entry_price;
+              const progress = range > 0
+                ? Math.max(0, Math.min(100, (currentPrice - p.entry_price) / range * 100))
+                : 0;
+              const holdSecs = Math.floor((Date.now() / 1000) - p.open_time);
+              return (
+                <div className="rounded-xl border-2 border-red-500/40 bg-red-950/20 p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">🔥</span>
+                      <span className="font-bold text-base text-red-200">{p.symbol.replace("USDT", "")}</span>
+                      <span className="text-[10px] text-[var(--muted)] font-mono">USDT</span>
+                      <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-orange-500/20 text-orange-300 border border-orange-500/30">
+                        {p.category === "meme" ? "🎰 MEME" : "ALTCOIN"}
+                      </span>
+                      <span className="text-[10px] text-[var(--muted)]">+{(p.change_pct_24h ?? 0).toFixed(1)}% 24h</span>
+                    </div>
+                    <span className="px-2 py-0.5 rounded text-xs font-bold bg-green-500/20 text-green-400 border border-green-500/30">LONG ×40</span>
+                  </div>
+
+                  {/* PnL grande */}
+                  <div className={`rounded-lg px-3 py-2.5 text-center ${pnl > 0 ? "bg-green-500/12" : pnl < 0 ? "bg-red-500/12" : "bg-white/5"}`}>
+                    <div className={`text-2xl font-black font-mono ${pnlColor}`}>
+                      {pnl >= 0 ? "+" : ""}{pnl.toFixed(6)}
+                      <span className="text-xs font-semibold ml-1">USDT</span>
+                    </div>
+                    <div className={`text-sm font-semibold ${pnlColor} mt-0.5`}>
+                      {pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(3)}% desde entrada
+                    </div>
+                  </div>
+
+                  {/* Precios */}
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div>
+                      <div className="text-[var(--muted)] mb-0.5">Precio actual</div>
+                      <div className="font-mono font-semibold text-sm">{currentPrice.toFixed(8)}</div>
+                    </div>
+                    <div>
+                      <div className="text-[var(--muted)] mb-0.5">Entrada</div>
+                      <div className="font-mono font-semibold text-sm">{p.entry_price.toFixed(8)}</div>
+                      <div className="text-[10px] text-[var(--muted)]">{p.quantity} unidades</div>
+                    </div>
+                  </div>
+
+                  {/* Barra de progreso hacia TP */}
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-[10px] text-[var(--muted)]">
+                      <span>SL <span className="font-mono text-red-400">{p.stop_loss_price.toFixed(8)}</span></span>
+                      <span className={`text-[10px] font-semibold ${progress > 50 ? "text-green-400" : "text-slate-400"}`}>{progress.toFixed(0)}% → TP</span>
+                      <span>TP <span className="font-mono text-green-400">{p.take_profit_price.toFixed(8)}</span></span>
+                    </div>
+                    <div className="h-2 bg-slate-700/60 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all duration-700 ${progress > 75 ? "bg-green-400" : progress > 40 ? "bg-yellow-400" : "bg-red-400"}`}
+                        style={{ width: `${progress}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex justify-between text-[10px] text-[var(--muted)] border-t border-[var(--border)] pt-2">
+                    <span>Capital invertido: <span className="font-mono font-semibold text-[var(--text)]">{(p.capital_used ?? 0).toFixed(2)} USDT</span></span>
+                    <span>Tiempo: <span className="font-mono">{holdSecs < 60 ? `${holdSecs}s` : `${Math.floor(holdSecs/60)}m ${holdSecs%60}s`}</span></span>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        )}
 
         {/* ── Alert zone ── */}
         {isTrading && port && (
@@ -515,7 +967,18 @@ export default function Dashboard() {
         )}
 
         {/* Portfolio Stats */}
-        {port && (
+        {port && (() => {
+          const totalUnrealized = Object.values(port.positions).reduce((sum, pos) => sum + (pos.unrealized_pnl ?? 0), 0);
+          const combinedPnl = port.total_pnl + totalUnrealized;
+          const hasOpenPositions = port.open_positions > 0;
+
+          // Win Rate en tiempo real: cerrados ganadores + abiertas en ganancia / total
+          const openWinning = Object.values(port.positions).filter(pos => (pos.unrealized_pnl ?? 0) > 0).length;
+          const liveWinning = port.winning_trades + openWinning;
+          const liveTotal = port.total_trades + port.open_positions;
+          const liveWinRate = liveTotal > 0 ? liveWinning / liveTotal : 0;
+
+          return (
           <Card title="Portafolio">
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-6 lg:gap-8">
               <Stat
@@ -529,82 +992,151 @@ export default function Dashboard() {
               />
               <Stat
                 label="PnL Total"
-                value={<PnlValue value={port.total_pnl} />}
+                value={<PnlValue value={combinedPnl} />}
+                sub={hasOpenPositions
+                  ? `Realiz: ${port.total_pnl >= 0 ? "+" : ""}${port.total_pnl.toFixed(4)} | Abierto: ${totalUnrealized >= 0 ? "+" : ""}${totalUnrealized.toFixed(4)}`
+                  : undefined}
               />
               <Stat
                 label="Win Rate"
                 value={
-                  <span className={port.win_rate >= 0.5 ? "text-green-400" : "text-red-400"}>
-                    {(port.win_rate * 100).toFixed(1)}%
+                  <span className={liveWinRate >= 0.5 ? "text-green-400" : liveWinRate > 0 ? "text-yellow-400" : "text-red-400"}>
+                    {(liveWinRate * 100).toFixed(1)}%
                   </span>
                 }
-                sub={`${port.winning_trades}/${port.total_trades} trades`}
+                sub={
+                  hasOpenPositions
+                    ? `${liveWinning}/${liveTotal} · ${openWinning} abierta${openWinning !== 1 ? "s" : ""} ganando`
+                    : `${port.winning_trades}/${port.total_trades} cerrados`
+                }
               />
               <Stat label="Posiciones" value={port.open_positions} />
               <Stat label="Total trades" value={port.total_trades} />
             </div>
           </Card>
-        )}
+          );
+        })()}
 
         {/* Open Positions */}
         {port && port.open_positions > 0 && (
-          <Card title="Posiciones abiertas">
+          <Card title="Portfolio — Posiciones abiertas">
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-              {Object.entries(port.positions).map(([sym, pos]) => (
-                <div key={sym} className="rounded-lg border border-[var(--border)] p-4 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="font-semibold">{sym}</span>
-                    <SignalBadge signal={pos.direction} />
+              {Object.entries(port.positions).map(([sym, pos]) => {
+                const pnl = pos.unrealized_pnl ?? 0;
+                const pnlPct = pos.unrealized_pnl_pct ?? 0;
+                const currentPrice = pos.current_price ?? pos.entry_price;
+                const isProfit = pnl >= 0;
+                const pnlColor = pnl > 0 ? "text-green-400" : pnl < 0 ? "text-red-400" : "text-slate-400";
+                const pnlBg = pnl > 0 ? "bg-green-500/8 border-green-500/25" : pnl < 0 ? "bg-red-500/8 border-red-500/25" : "bg-white/5 border-[var(--border)]";
+                const priceDiff = currentPrice - pos.entry_price;
+                // Progreso hacia TP o SL
+                const range = pos.direction === "LONG"
+                  ? pos.take_profit - pos.entry_price
+                  : pos.entry_price - pos.take_profit;
+                const progress = pos.direction === "LONG"
+                  ? Math.max(0, Math.min(100, (currentPrice - pos.entry_price) / (range || 1) * 100))
+                  : Math.max(0, Math.min(100, (pos.entry_price - currentPrice) / (range || 1) * 100));
+                return (
+                  <div key={sym} className={`rounded-xl border ${pnlBg} p-4 space-y-3`}>
+                    {/* Header */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-base">{sym.replace("USDT", "")}</span>
+                        <span className="text-[10px] text-[var(--muted)] font-mono">USDT</span>
+                      </div>
+                      <SignalBadge signal={pos.direction} />
+                    </div>
+
+                    {/* P&L grande */}
+                    <div className={`rounded-lg px-3 py-2.5 text-center ${pnl > 0 ? "bg-green-500/12" : pnl < 0 ? "bg-red-500/12" : "bg-white/5"}`}>
+                      <div className={`text-2xl font-black font-mono ${pnlColor}`}>
+                        {pnl >= 0 ? "+" : ""}{pnl.toFixed(4)}
+                        <span className="text-xs font-semibold ml-1">USDT</span>
+                      </div>
+                      <div className={`text-sm font-semibold ${pnlColor} mt-0.5`}>
+                        {pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(2)}% desde entrada
+                      </div>
+                    </div>
+
+                    {/* Precios */}
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div>
+                        <div className="text-[var(--muted)] mb-0.5">Precio actual</div>
+                        <div className="font-mono font-semibold text-sm">${currentPrice.toLocaleString(undefined, { maximumFractionDigits: 6 })}</div>
+                        <div className={`text-[10px] font-mono ${priceDiff >= 0 ? "text-green-400" : "text-red-400"}`}>
+                          {priceDiff >= 0 ? "+" : ""}{priceDiff.toFixed(6)}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[var(--muted)] mb-0.5">Precio entrada</div>
+                        <div className="font-mono font-semibold text-sm">${pos.entry_price.toLocaleString(undefined, { maximumFractionDigits: 6 })}</div>
+                        <div className="text-[10px] text-[var(--muted)]">{pos.quantity} unidades</div>
+                      </div>
+                    </div>
+
+                    {/* Barra de progreso hacia TP */}
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-[10px] text-[var(--muted)]">
+                        <span>SL <span className="font-mono text-red-400">${pos.stop_loss.toLocaleString(undefined, { maximumFractionDigits: 6 })}</span></span>
+                        <span className={`text-[10px] font-semibold ${progress > 50 ? "text-green-400" : "text-slate-400"}`}>{progress.toFixed(0)}% → TP</span>
+                        <span>TP <span className="font-mono text-green-400">${pos.take_profit.toLocaleString(undefined, { maximumFractionDigits: 6 })}</span></span>
+                      </div>
+                      <div className="h-1.5 bg-slate-700/60 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all duration-700 ${progress > 75 ? "bg-green-400" : progress > 40 ? "bg-yellow-400" : "bg-red-400"}`}
+                          style={{ width: `${progress}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Capital */}
+                    <div className="flex justify-between text-[10px] text-[var(--muted)] border-t border-[var(--border)] pt-2">
+                      <span>Capital invertido</span>
+                      <span className="font-mono font-semibold text-[var(--text)]">{pos.capital_used.toFixed(2)} USDT</span>
+                    </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div><span className="text-[var(--muted)]">Entrada: </span><span className="font-mono">${pos.entry_price.toLocaleString()}</span></div>
-                    <div><span className="text-[var(--muted)]">Cantidad: </span><span className="font-mono">{pos.quantity}</span></div>
-                    <div><span className="text-[var(--muted)]">SL: </span><span className="font-mono text-red-400">${pos.stop_loss.toLocaleString()}</span></div>
-                    <div><span className="text-[var(--muted)]">TP: </span><span className="font-mono text-green-400">${pos.take_profit.toLocaleString()}</span></div>
-                    <div><span className="text-[var(--muted)]">Capital: </span><span className="font-mono">{pos.capital_used.toFixed(2)} USDT</span></div>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </Card>
         )}
 
         {/* Market Analysis */}
         {Object.keys(snapshots).length > 0 && (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
             {Object.entries(snapshots).map(([sym, snap]) => {
               const sig = signals[sym];
               return (
                 <Card key={sym} title={sym}>
-                  <div className="space-y-4">
+                  <div className="space-y-5">
                     <div className="flex items-center justify-between">
-                      <span className="text-2xl lg:text-3xl font-mono font-bold">
+                      <span className="text-3xl lg:text-4xl font-mono font-bold">
                         ${snap.price.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
                       <TrendBadge trend={snap.trend} />
                     </div>
                     <RsiBar rsi={snap.rsi} />
-                    <div className="grid grid-cols-2 gap-2 text-xs">
-                      <div><span className="text-[var(--muted)]">SMA20: </span><span className="font-mono">{snap.sma20.toFixed(2)}</span></div>
-                      <div><span className="text-[var(--muted)]">SMA50: </span><span className="font-mono">{snap.sma50.toFixed(2)}</span></div>
-                      <div><span className="text-[var(--muted)]">Volumen: </span><span>{snap.volume_trend}</span></div>
-                      <div><span className="text-[var(--muted)]">OI: </span><span>{snap.oi_trend}</span></div>
+                    <div className="grid grid-cols-2 gap-3 text-sm">
+                      <div><span className="text-[var(--muted)]">SMA20: </span><span className="font-mono font-medium">{snap.sma20.toFixed(2)}</span></div>
+                      <div><span className="text-[var(--muted)]">SMA50: </span><span className="font-mono font-medium">{snap.sma50.toFixed(2)}</span></div>
+                      <div><span className="text-[var(--muted)]">Volumen: </span><span className="font-medium">{snap.volume_trend}</span></div>
+                      <div><span className="text-[var(--muted)]">OI: </span><span className="font-medium">{snap.oi_trend}</span></div>
                       <div className="col-span-2">
                         <span className="text-[var(--muted)]">Funding: </span>
-                        <span className={`font-mono ${snap.funding_rate > 0 ? "text-green-400" : "text-red-400"}`}>
+                        <span className={`font-mono font-semibold ${snap.funding_rate > 0 ? "text-green-400" : "text-red-400"}`}>
                           {(snap.funding_rate * 100).toFixed(4)}%
                         </span>
                       </div>
                     </div>
                     {sig && (
-                      <div className="pt-2 border-t border-[var(--border)]">
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-xs text-[var(--muted)]">Señal actual</span>
+                      <div className="pt-3 border-t border-[var(--border)]">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-sm text-[var(--muted)]">Señal actual</span>
                           <SignalBadge signal={sig.signal} />
                         </div>
                         {sig.signal !== "NO_SIGNAL" && (
-                          <div className="text-xs text-[var(--muted)] mt-1 leading-relaxed">
-                            <span className="text-[var(--text)]">{sig.strategy}</span> · confianza {(sig.confidence * 100).toFixed(0)}%
+                          <div className="text-sm text-[var(--muted)] mt-1 leading-relaxed">
+                            <span className="text-[var(--text)] font-medium">{sig.strategy}</span> · confianza {(sig.confidence * 100).toFixed(0)}%
                             <div className="mt-1 opacity-70">{sig.reason}</div>
                           </div>
                         )}
@@ -668,39 +1200,89 @@ export default function Dashboard() {
       </main>
 
       {/* ── Fixed action bar ── */}
-      <div className="fixed bottom-0 left-0 right-0 z-20 border-t border-[var(--border)] bg-[var(--bg)]/95 backdrop-blur-md px-4 py-3">
-        <div className="w-full px-2 sm:px-6 lg:px-10 xl:px-16 flex items-center gap-3">
-          {/* BULLISH */}
+      <div className="fixed bottom-0 left-0 right-0 z-20 border-t border-[var(--border)] bg-[var(--bg)]/95 backdrop-blur-md px-4 py-5">
+        <div className="w-full px-2 sm:px-6 lg:px-10 xl:px-16 flex items-center justify-between gap-6">
+
+          {/* BULLISH — botón circular 3D verde */}
           <button
             onClick={() => setShowBullish(true)}
-            className="flex-1 sm:flex-none sm:w-48 flex items-center justify-center gap-2 py-3 px-5 rounded-xl bg-green-600/20 hover:bg-green-600/35 border border-green-500/40 text-green-400 font-bold text-sm transition-all hover:scale-[1.02] active:scale-95"
+            className="group flex flex-col items-center justify-center gap-1.5 w-32 h-32 sm:w-36 sm:h-36 rounded-full font-black text-white transition-all duration-150 active:scale-95 active:translate-y-1"
+            style={{
+              background: "radial-gradient(circle at 35% 35%, #4ade80, #16a34a 60%, #14532d)",
+              boxShadow: "0 8px 0 #14532d, 0 12px 24px rgba(22,163,74,0.5), inset 0 2px 4px rgba(255,255,255,0.25)",
+            } as React.CSSProperties}
           >
-            🐂 <span>BULLISH</span>
+            <span className="text-3xl sm:text-4xl drop-shadow">🐂</span>
+            <span className="text-sm sm:text-base tracking-wide drop-shadow-md">BULLISH</span>
           </button>
 
-          <div className="flex-1 text-center text-xs text-[var(--muted)] hidden sm:block">
+          {/* Info central */}
+          <div className="flex-1 text-center text-sm text-[var(--muted)] hidden sm:block">
             {port ? (
-              <span>{port.available_capital.toFixed(2)} USDT disponibles · {port.open_positions} posición{port.open_positions !== 1 ? "es" : ""}</span>
+              <>
+                <div className="text-base font-semibold text-[var(--text)]">{port.available_capital.toFixed(2)} USDT</div>
+                <div className="text-xs mt-0.5">{port.open_positions} posición{port.open_positions !== 1 ? "es" : ""} abiertas</div>
+              </>
             ) : (
               <span>Conectando...</span>
             )}
           </div>
 
-          {/* BOMBARDA */}
+          {/* BOMBARDA — botón circular 3D rojo */}
           <button
             onClick={() => { setBombardaResult(null); setShowBombarda(true); }}
-            className="flex-1 sm:flex-none sm:w-48 flex items-center justify-center gap-2 py-3 px-5 rounded-xl bg-red-600/20 hover:bg-red-600/35 border border-red-500/50 text-red-400 font-black text-sm transition-all hover:scale-[1.02] active:scale-95 shadow-lg shadow-red-500/10"
+            className="group flex flex-col items-center justify-center gap-1.5 w-32 h-32 sm:w-36 sm:h-36 rounded-full font-black text-white transition-all duration-150 active:scale-95 active:translate-y-1"
+            style={{
+              background: "radial-gradient(circle at 35% 35%, #f87171, #dc2626 60%, #7f1d1d)",
+              boxShadow: "0 8px 0 #7f1d1d, 0 12px 24px rgba(220,38,38,0.5), inset 0 2px 4px rgba(255,255,255,0.2)",
+            } as React.CSSProperties}
           >
-            💣 <span>LA BOMBARDA</span>
+            <span className="text-3xl sm:text-4xl drop-shadow">💣</span>
+            <span className="text-xs sm:text-sm tracking-wide drop-shadow-md text-center leading-tight">LA<br/>BOMBARDA</span>
           </button>
+
         </div>
       </div>
+
+      {/* ── Marquitos Chat ── */}
+      <>
+        {/* Botón flotante rojo a la izquierda */}
+        <button
+          onClick={() => setShowMarquitos(v => !v)}
+          title="Llamar a Marquitos"
+          className="fixed bottom-48 left-4 z-40 w-14 h-14 rounded-full shadow-xl transition-all duration-150 active:scale-95 flex items-center justify-center text-2xl relative"
+          style={{
+            background: showMarquitos
+              ? "radial-gradient(circle at 35% 35%, #f87171, #dc2626 60%, #7f1d1d)"
+              : "radial-gradient(circle at 35% 35%, #fca5a5, #ef4444 60%, #7f1d1d)",
+            boxShadow: "0 6px 0 #7f1d1d, 0 10px 20px rgba(220,38,38,0.5), inset 0 2px 4px rgba(255,255,255,0.2)",
+          } as React.CSSProperties}
+        >
+          {showMarquitos ? "✕" : "⚡"}
+          {!showMarquitos && (
+            <span className="absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-red-300 border-2 border-[var(--bg)] animate-ping" />
+          )}
+        </button>
+        {/* Ventana MarquitosChat */}
+        {showMarquitos && (
+          <MarquitosChat isOpen={showMarquitos} onClose={() => setShowMarquitos(false)} />
+        )}
+      </>
+
+      {/* ── Tincho2 Chat ── */}
+      <Tincho2Chat
+        agentStatus={agentStatus}
+        isOpen={showAiChat}
+        onToggle={() => setShowAiChat(v => !v)}
+        onBullishRecommend={(sym) => { setBullishPrefill(sym); setShowBullish(true); }}
+      />
 
       {/* ── Modals ── */}
       {showBullish && (
         <BullishModal
           availableCapital={port?.available_capital ?? 0}
-          onClose={() => setShowBullish(false)}
+          initialSymbol={bullishPrefill}
+          onClose={() => { setShowBullish(false); setBullishPrefill(""); }}
         />
       )}
       {showBombarda && (

@@ -79,6 +79,12 @@ Ejemplos:
         dest="force_ai",
         help="Fuerza la consulta a la IA en el primer ciclo aunque no haya señal (útil para pruebas)",
     )
+    parser.add_argument(
+        "--tryhard",
+        action="store_true",
+        dest="tryhard",
+        help="Modo agresivo: relaja filtros de volumen y proximidad SMA20 para entrar más fácilmente",
+    )
     return parser.parse_args()
 
 
@@ -147,6 +153,15 @@ def main() -> None:
         "DESACTIVADA" if args.no_api else f"http://localhost:{settings.api_port}",
     )
 
+    if not dry_run and settings.binance_testnet:
+        logger.warning("=" * 60)
+        logger.warning("  ADVERTENCIA: --live con BINANCE_TESTNET=True")
+        logger.warning("  Las claves de testnet no soportan todos los endpoints.")
+        logger.warning("  Cambiando a dry_run=True automáticamente.")
+        logger.warning("  Para operar real: BINANCE_TESTNET=False + claves de mainnet")
+        logger.warning("=" * 60)
+        dry_run = True
+
     if not dry_run and not settings.binance_testnet:
         logger.warning("=" * 60)
         logger.warning("  MODO LIVE EN MAINNET — SE USARÁ DINERO REAL")
@@ -161,11 +176,11 @@ def main() -> None:
     if args.no_api:
         # Iniciar solo el agente sin API
         from agent.trading_agent import TradingAgent
-        agent = TradingAgent(dry_run=dry_run, interval_override=args.interval, force_ai=args.force_ai)
+        agent = TradingAgent(dry_run=dry_run, interval_override=args.interval, force_ai=args.force_ai, tryhard=args.tryhard)
         agent.start()
     else:
         from app.agent_runner import AgentRunner
-        runner = AgentRunner(dry_run=dry_run, interval_override=args.interval, force_ai=args.force_ai)
+        runner = AgentRunner(dry_run=dry_run, interval_override=args.interval, force_ai=args.force_ai, tryhard=args.tryhard)
         runner.run()
 
 

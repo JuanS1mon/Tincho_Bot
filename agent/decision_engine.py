@@ -87,12 +87,28 @@ class DecisionEngine:
             state.add_log(reason)
             return False, reason
 
-        # ── 2. Consultar IA ───────────────────────────────────────────────────
-        logger.info("[%s] Consultando IA...", symbol)
+        # ── 2. Hard rules algorítmicas (nunca delegar a la IA) ────────────────────
+        blocked, block_reason = self._check_hard_rules(symbol, direction, indicators, sim)
+        if blocked:
+            logger.info("[%s] Hard rule bloqueada: %s", symbol, block_reason)
+            state.add_log(f"Hard rule: {block_reason}")
+            return False, f"Hard rule: {block_reason}"
+
+        # ── 3. Consultar IA (solo para parameter_adjustments y razonamiento) ────────
+
+        # Cargar historial de trades recientes para enriquecer el prompt
+        try:
+            recent_trades = trade_repository.get_recent_trades(limit=10)
+        except Exception:
+            recent_trades = []
+
         user_prompt = build_decision_prompt(
             all_market_data,
             sim,
             dynamic_params=parameters_manager.params,
+            recent_trades=recent_trades,
+            target_symbol=symbol,
+            target_direction=direction,
         )
         ai_decision: Optional[AIDecision] = llm_client.decide(user_prompt)
 
@@ -110,34 +126,25 @@ class DecisionEngine:
             confidence=ai_decision.confidence,
             reasoning=ai_decision.reasoning,
         )
-        decision_word = "OPERAR" if ai_decision.trade else "NO OPERAR"
+        decision_word = "OPERAR" if ai_decision.trade else "NO OPERAR (ignorado — hard rules OK)"
         logger.info(
-            "[%s] [IA] %s | conf=%.0f%% | %s",
+            "[%s] 🤖 IA → %s | conf=%.0f%% | %s",
             symbol, decision_word, ai_decision.confidence * 100, ai_decision.reasoning,
         )
         state.add_log(
             f"[IA] {decision_word} conf={ai_decision.confidence:.0%} | {ai_decision.reasoning}"
         )
 
-        if not ai_decision.trade:
-            reason = f"IA rechazó el trade: {ai_decision.reasoning}"
-            logger.info("[%s] %s", symbol, reason)
-            # Aplicar ajustes de parámetros aunque no haya trade
-            if ai_decision.parameter_adjustments:
-                parameters_manager.apply_adjustments(
-                    ai_decision.parameter_adjustments,
-                    reason=f"No-trade cycle: {ai_decision.reasoning}",
-                )
-            return False, reason
-
-        # Verificar coherencia señal local vs IA
-        if ai_decision.symbol != symbol or ai_decision.direction != direction:
-            logger.warning(
-                "[%s] IA sugiere %s/%s pero señal local es %s/%s — usando señal local",
-                symbol, ai_decision.symbol, ai_decision.direction, symbol, direction,
+        # La decisión de trade la toma el código (hard rules ya validadas arriba).
+        # La IA solo aporta parameter_adjustments y razonamiento.
+        if ai_decision.parameter_adjustments:
+            parameters_manager.apply_adjustments(
+                ai_decision.parameter_adjustments,
+                reason=f"Trade cycle: {ai_decision.reasoning}",
             )
+            state.add_log(f"Parámetros ajustados por IA: {ai_decision.parameter_adjustments}")
 
-        # ── 3. Validar riesgo ─────────────────────────────────────────────────
+        # ── 4. Validar riesgo ────────────────────────────────────────────────────
         # Sincronizar RiskTool con los parámetros dinámicos actuales
         risk_tool.sync_params(parameters_manager.params)
 
@@ -163,15 +170,10 @@ class DecisionEngine:
             logger.info("[%s] %s", symbol, reason)
             return False, reason
 
-        # ── 4. Aplicar ajustes de parámetros sugeridos por la IA ─────────────
-        if ai_decision.parameter_adjustments:
-            parameters_manager.apply_adjustments(
-                ai_decision.parameter_adjustments,
-                reason=f"Trade approved: {ai_decision.reasoning}",
-            )
-            state.add_log(f"Parámetros ajustados por IA: {ai_decision.parameter_adjustments}")
+        # ── 5. Aplicar ajustes de parámetros sugeridos por la IA ──────────────────
+        # (ya aplicados antes, este bloque es solo para referencia)
 
-        # ── 5. Ejecutar trade ─────────────────────────────────────────────────
+        # ── 6. Ejecutar trade ───────────────────────────────────────────────
         logger.info("[%s] Ejecutando trade %s (dry_run=%s)...", symbol, direction, self.dry_run)
         result = execution_tool.execute(
             symbol=symbol,
@@ -204,19 +206,31 @@ class DecisionEngine:
         state: AgentState,
     ) -> None:
         """
-        Consulta la IA solo para análisis/registro, sin ejecutar ningún trade.
-        Usado con --force-ai para observar el razonamiento de la IA en pruebas.
+        Consulta la IA aunque no haya señal técnica activa (--force-ai).
+        Si la IA aprueba el trade con confianza > 60%, lo ejecuta.
         """
         from tools.simulation_tool import simulation_tool
         logger.info("[%s] [--force-ai] Consultando IA sin señal activa...", symbol)
 
-        # Simulación neutral para dar contexto a la IA (dirección LONG como referencia)
-        sim = simulation_tool.simulate(df, "LONG", portfolio_tool.capital)
+        # Determinar dirección probable por tendencia
+        from analysis.trend_detector import trend_detector, Trend
+        trend = trend_detector.detect(indicators)
+        direction = "SHORT" if trend == Trend.BEARISH else "LONG"
+
+        sim = simulation_tool.simulate(df, direction, portfolio_tool.capital)
+
+        try:
+            recent_trades = trade_repository.get_recent_trades(limit=10)
+        except Exception:
+            recent_trades = []
 
         user_prompt = build_decision_prompt(
             all_market_data,
             sim,
             dynamic_params=parameters_manager.params,
+            recent_trades=recent_trades,
+            target_symbol=symbol,
+            target_direction=direction,
         )
         ai_decision = llm_client.decide(user_prompt)
 
@@ -226,19 +240,117 @@ class DecisionEngine:
 
         decision_word = "OPERAR" if ai_decision.trade else "NO OPERAR"
         logger.info(
-            "[%s] [IA] %s | conf=%.0f%% | %s",
-            symbol, decision_word, ai_decision.confidence * 100, ai_decision.reasoning,
+            "[%s] [IA forzada] %s | dir=%s | conf=%.0f%% | %s",
+            symbol, decision_word, direction, ai_decision.confidence * 100, ai_decision.reasoning,
         )
         state.add_log(
             f"[IA force] {decision_word} conf={ai_decision.confidence:.0%} | {ai_decision.reasoning}"
         )
 
-        # Aplicar ajustes de parámetros si la IA los propone
+        # Ajustar parámetros si la IA los propone
         if ai_decision.parameter_adjustments:
             parameters_manager.apply_adjustments(
                 ai_decision.parameter_adjustments,
-                reason=f"force-ai cycle: {ai_decision.reasoning}",
+                reason=f"force-ai: {ai_decision.reasoning}",
             )
+
+        # Si la IA aprueba y tiene confianza suficiente → ejecutar el trade
+        if ai_decision.trade and ai_decision.confidence >= 0.60:
+            if portfolio_tool.has_open_position(symbol):
+                logger.info("[%s] [--force-ai] IA aprobó pero ya hay posición abierta", symbol)
+                return
+
+            risk_tool.sync_params(parameters_manager.params)
+            final_direction = ai_decision.direction or direction
+            current_price = indicators.price
+            risk_params = risk_tool.validate(
+                direction=final_direction,
+                entry_price=current_price,
+                available_capital=portfolio_tool.available_capital_for_symbol(symbol),
+                total_capital=portfolio_tool.symbol_allocation(symbol),
+                capital_usage=ai_decision.capital_usage,
+            )
+            if not risk_params.is_valid:
+                logger.info("[%s] [--force-ai] Riesgo rechazó: %s", symbol, risk_params.rejection_reason)
+                return
+
+            result = execution_tool.execute(
+                symbol=symbol,
+                direction=final_direction,
+                risk_params=risk_params,
+                strategy="AI_FORCED",
+                dry_run=self.dry_run,
+            )
+            logger.info("[%s] [--force-ai] Trade ejecutado: %s", symbol, result)
+            state.add_log(f"[IA force] TRADE EJECUTADO {symbol} {final_direction} | {result}")
+
+    # ── Hard rules algorítmicas (sin IA) ─────────────────────────────────────
+
+    def _check_hard_rules(
+        self,
+        symbol: str,
+        direction: str,
+        indicators: "Indicators",
+        sim: "SimulationResult",
+    ) -> "Tuple[bool, str]":
+        """
+        Valida las hard rules numéricas sin depender de la IA.
+        Retorna (bloqueado: bool, razón: str).
+        """
+        # 1. RSI extremo en SHORT → riesgo de rebote inminente
+        if direction == "SHORT" and indicators.rsi < 22:
+            return True, f"RSI={indicators.rsi:.1f} < 22 en SHORT — oversold extremo, riesgo de rebote"
+
+        # 2. RSI extremo en LONG → riesgo de reversión
+        if direction == "LONG" and indicators.rsi > 78:
+            return True, f"RSI={indicators.rsi:.1f} > 78 en LONG — overbought, riesgo de reversión"
+
+        # 3. Winrate mínimo (simulación ya lo filtra, pero refuerzo aquí)
+        if sim.winrate < 0.45:
+            return True, f"Winrate={sim.winrate:.1%} < 45% — simulación insuficiente"
+
+        # 4. Probabilidad de ruina
+        if sim.mc_ruin_probability > 0.20:
+            return True, f"Ruin probability={sim.mc_ruin_probability:.1%} > 20%"
+
+        # 5. Dirección opuesta a la tendencia SMA
+        if direction == "LONG" and indicators.sma20 < indicators.sma50:
+            return True, f"SMA20={indicators.sma20:.2f} < SMA50={indicators.sma50:.2f} — tendencia BEARISH, no LONG"
+        if direction == "SHORT" and indicators.sma20 > indicators.sma50:
+            return True, f"SMA20={indicators.sma20:.2f} > SMA50={indicators.sma50:.2f} — tendencia BULLISH, no SHORT"
+
+        return False, ""
+
+    def market_overview_adjust(self, all_market_data: dict, state: AgentState) -> None:
+        """
+        Tincho1 analiza las condiciones globales del mercado y ajusta
+        los parámetros del agente si lo considera necesario.
+        Se llama una vez por ciclo (o cada N ciclos) desde _run_cycle().
+        """
+        from ai.decision_prompt import build_market_overview_prompt
+
+        prompt = build_market_overview_prompt(
+            all_market_data=all_market_data,
+            dynamic_params=parameters_manager.params,
+            portfolio_state=portfolio_tool.get_state_dict(),
+        )
+        result = llm_client.market_overview(prompt)
+        if result is None:
+            return
+
+        adj = result.get("parameter_adjustments")
+        if adj and isinstance(adj, dict):
+            changed = parameters_manager.apply_adjustments(
+                adj,
+                reason=f"Tincho1 market overview: {result.get('reasoning', '')[:80]}",
+            )
+            if changed:
+                state.add_log(
+                    f"Tincho1 ajustó parámetros globales: {adj} | {result.get('reasoning', '')[:80]}"
+                )
+                logger.info("🌍 Tincho1 ajustó parámetros: %s", adj)
+        else:
+            logger.debug("🌍 Tincho1 market overview: sin cambios de parámetros")
 
     def _log_execution(
         self, symbol, direction, signal, sim, ai_decision, risk_params, result

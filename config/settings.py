@@ -35,13 +35,13 @@ class Settings(BaseSettings):
     initial_capital: float = 100.0
     # SYMBOLS se guarda como str CSV y se expone como List[str] via property
     symbols_csv: str = "BTCUSDT,ETHUSDT"
-    leverage: int = 3
-    max_capital_per_trade: float = 0.30
-    risk_per_trade: float = 0.01
+    leverage: int = 8
+    max_capital_per_trade: float = 0.50
+    risk_per_trade: float = 0.015
     stop_loss: float = 0.02
-    take_profit: float = 0.06
+    take_profit: float = 0.05
     timeframe: str = "15m"
-    analysis_interval_seconds: int = 900
+    analysis_interval_seconds: int = 300
     min_winrate: float = 0.45
 
     # ── MongoDB ───────────────────────────────────────────────────────────────

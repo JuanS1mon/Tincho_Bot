@@ -1,12 +1,17 @@
 """
 analysis/trend_detector.py
 ==========================
-Detecta la tendencia del mercado comparando SMA20 vs SMA50.
+Detecta la tendencia del mercado combinando SMA20, SMA50 y SMA100.
 
 Reglas:
-  SMA20 > SMA50 → BULLISH
-  SMA20 < SMA50 → BEARISH
-  |SMA20 - SMA50| muy pequeño → NEUTRAL
+  BULLISH: SMA20 > SMA50 > SMA100 — las tres medias alineadas hacia arriba.
+           Confirma tendencia alcista real (no rebotes dentro de una caída).
+  BEARISH: SMA20 < SMA50             — la media corta ya giró a la baja.
+           No exige SMA100 alineada: si el precio cae con fuerza, el SHORT
+           se habilita en cuanto SMA20 cruza SMA50, sin esperar que SMA100
+           también se alinee (lo que tardaría decenas de velas más).
+  NEUTRAL: cualquier otra combinación (ej. SMA20 > SMA50 pero SMA50 < SMA100,
+           típico de un rebote en una bajada mayor).
 """
 from __future__ import annotations
 
@@ -22,36 +27,39 @@ class Trend(str, Enum):
 
 
 class TrendDetector:
-    """Determina la tendencia de mercado a partir de los indicadores."""
-
-    # Si la diferencia relativa entre SMA20 y SMA50 es menor a este umbral → NEUTRAL
-    NEUTRAL_THRESHOLD: float = 0.001  # 0.1%
+    """Determina la tendencia de mercado a partir de las tres medias móviles."""
 
     def detect(self, indicators: Indicators) -> Trend:
-        """
-        Retorna la tendencia basándose en el cruce de medias móviles.
-        """
-        sma20, sma50 = indicators.sma20, indicators.sma50
-        diff_pct = abs(sma20 - sma50) / sma50 if sma50 != 0 else 0
+        sma20  = indicators.sma20
+        sma50  = indicators.sma50
+        sma100 = indicators.sma100
 
-        if diff_pct < self.NEUTRAL_THRESHOLD:
-            return Trend.NEUTRAL
-
-        if sma20 > sma50:
+        # LONG solo si las tres medias están ordenadas alcistas (filtro estricto)
+        if sma20 > sma50 > sma100:
             return Trend.BULLISH
 
-        return Trend.BEARISH
+        # SHORT en cuanto SMA20 cruza SMA50 hacia abajo (reacción rápida)
+        if sma20 < sma50:
+            return Trend.BEARISH
+
+        # SMA20 entre SMA50 y SMA100 → mercado sin dirección clara
+        return Trend.NEUTRAL
 
     def describe(self, indicators: Indicators) -> dict:
         """Retorna dict con tendencia y métricas asociadas."""
         trend = self.detect(indicators)
+        sma50 = indicators.sma50
         return {
             "trend": trend.value,
             "sma20": indicators.sma20,
             "sma50": indicators.sma50,
-            "diff_pct": round(
-                (indicators.sma20 - indicators.sma50) / indicators.sma50 * 100, 3
-            ) if indicators.sma50 != 0 else 0,
+            "sma100": indicators.sma100,
+            "sma20_vs_sma50_pct": round(
+                (indicators.sma20 - sma50) / sma50 * 100, 3
+            ) if sma50 != 0 else 0,
+            "sma50_vs_sma100_pct": round(
+                (sma50 - indicators.sma100) / indicators.sma100 * 100, 3
+            ) if indicators.sma100 != 0 else 0,
         }
 
 

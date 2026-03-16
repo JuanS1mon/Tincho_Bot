@@ -62,30 +62,40 @@ class PortfolioTool:
         self.total_trades: int = 0
         self.winning_trades: int = 0
 
-    def sync_from_exchange(self) -> None:
+    def sync_from_exchange(self, force: bool = False) -> None:
         """
         Sincroniza el capital con el saldo USDT real de la cuenta Futures.
-        Si no se puede obtener, mantiene el valor del .env como fallback.
-        Solo actualiza si no hay posiciones abiertas (para no distorsionar PnL).
+        En testnet se omite: la API del testnet no soporta futures_account_balance.
         """
-        if self.positions:
-            logger.info("sync_from_exchange: omitido (hay posiciones abiertas).")
+        if settings.binance_testnet:
+            logger.debug("sync_from_exchange: omitido en testnet.")
             return
         from exchange.market_fetcher import market_fetcher
         real_balance = market_fetcher.get_usdt_balance()
-        if real_balance is not None and real_balance > 0:
-            self.capital = real_balance
-            self.initial_capital = real_balance
-            logger.info(
-                "Capital sincronizado desde Binance Futures: %.4f USDT",
-                real_balance,
-            )
+        if real_balance is not None:
+            if self.positions and not force:
+                # Hay posiciones abiertas: solo actualizamos initial_capital
+                # (el capital operativo lo gestiona close_position)
+                logger.info(
+                    "sync_from_exchange: posiciones abiertas, solo actualizando referencia. "
+                    "Binance=%.4f USDT", real_balance,
+                )
+            else:
+                self.capital = real_balance
+                self.initial_capital = real_balance
+                logger.info(
+                    "Capital sincronizado desde Binance Futures: %.4f USDT", real_balance,
+                )
+                if real_balance == 0:
+                    logger.warning(
+                        "Saldo Futures en USDT es 0.0000. Si querés operar, transferí fondos a USDT-M Futures."
+                    )
         else:
             logger.warning(
-                "No se pudo sincronizar balance real. "
-                "Usando capital del .env: %.2f USDT. "
-                "Asegúrate de tener USDT en tu wallet de Binance Futures (no spot).",
-                settings.initial_capital,
+                "Balance Binance no disponible. Usando capital actual: %.2f USDT. "
+                "[Acción requerida] En Binance → API Management → "
+                "habilitá 'Enable Futures' y desactivá restricción de IP para esta key.",
+                self.capital,
             )
 
     # ── Capital ───────────────────────────────────────────────────────────────

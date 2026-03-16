@@ -22,7 +22,7 @@ from typing import Any, Dict, Set, Tuple
 from config.logger import trading_logger as logger, error_logger
 
 # Ubicación del archivo de configuración del agente
-AGENTE_MD_PATH = Path(__file__).parent.parent / "agente.md"
+AGENTE_MD_PATH = Path(__file__).parent.parent / "tincho1.md"
 
 
 class AgentConfig:
@@ -42,10 +42,10 @@ class AgentConfig:
     # ── Carga principal ───────────────────────────────────────────────────────
 
     def load(self) -> None:
-        """Lee agente.md y parsea todas las secciones."""
+        """Lee tincho1.md y parsea todas las secciones."""
         if not AGENTE_MD_PATH.exists():
             error_logger.error(
-                "agente.md no encontrado en %s — usando defaults hardcodeados", AGENTE_MD_PATH
+                "tincho1.md no encontrado en %s — usando defaults hardcodeados", AGENTE_MD_PATH
             )
             self._apply_defaults()
             return
@@ -56,7 +56,7 @@ class AgentConfig:
         self.valid_timeframes, self.default_timeframe = self._parse_timeframes()
 
         logger.info(
-            "agente.md cargado | %d parámetros | timeframes=%s | prompt=%d chars",
+            "tincho1.md cargado | %d parámetros | timeframes=%s | prompt=%d chars",
             len(self.param_bounds),
             sorted(self.valid_timeframes),
             len(self.system_prompt),
@@ -64,7 +64,7 @@ class AgentConfig:
 
     def reload(self) -> None:
         """Recarga el archivo sin reiniciar el proceso (hot-reload)."""
-        logger.info("Recargando agente.md...")
+        logger.info("Recargando tincho1.md...")
         self.load()
 
     # ── Parsers ───────────────────────────────────────────────────────────────
@@ -181,7 +181,7 @@ class AgentConfig:
     @staticmethod
     def _default_param_bounds() -> Dict[str, Tuple]:
         return {
-            "leverage":                  (1,     10,   int),
+            "leverage":                  (1,     20,   int),
             "max_capital_per_trade":     (0.05,  0.50, float),
             "risk_per_trade":            (0.005, 0.03, float),
             "stop_loss":                 (0.01,  0.05, float),

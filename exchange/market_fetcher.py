@@ -184,23 +184,27 @@ class MarketFetcher:
         if settings.binance_testnet:
             return []
 
+        from binance.exceptions import BinanceAPIException as _BinExc
         try:
-            raw = self._client.safe_call(
-                self._client.client.futures_coin_liquidation_orders,
-                symbol=symbol,
-                limit=limit,
+            raw = self._client.client.futures_coin_liquidation_orders(
+                symbol=symbol, limit=limit
             )
-        except Exception:
+        except _BinExc as exc:
+            if exc.code == -2015:
+                logger.debug("get_liquidations(%s): sin permisos (dato opcional, ignorado)", symbol)
+                return []
             # Fallback: endpoint alternativo para algunos pares
             try:
-                raw = self._client.safe_call(
-                    self._client.client.futures_liquidation_orders,
-                    symbol=symbol,
-                    limit=limit,
+                raw = self._client.client.futures_liquidation_orders(
+                    symbol=symbol, limit=limit
                 )
-            except Exception as exc:
-                error_logger.error("get_liquidations(%s) error: %s", symbol, exc)
+            except _BinExc as exc2:
+                if exc2.code != -2015:
+                    error_logger.error("get_liquidations(%s) error: %s", symbol, exc2)
                 return []
+        except Exception as exc:
+            error_logger.error("get_liquidations(%s) error inesperado: %s", symbol, exc)
+            return []
 
         result = []
         for order in raw:
@@ -217,20 +221,73 @@ class MarketFetcher:
 
     def get_usdt_balance(self) -> Optional[float]:
         """
-        Retorna el saldo USDT disponible en la cuenta Futures.
+        Retorna el saldo total USDT de la cuenta Futures (walletBalance).
+        Incluye PnL no realizado de posiciones abiertas (marginBalance).
         Retorna None si no se puede obtener (error de API, permisos, etc.).
         """
-        try:
-            balances = self._client.safe_call(
-                self._client.client.futures_account_balance
-            )
-            for asset in balances:
+        from binance.exceptions import BinanceAPIException as _BinExc
+
+        def _extract_usdt_balance(assets: List[Dict[str, Any]]) -> Optional[float]:
+            for asset in assets:
                 if asset.get("asset") == "USDT":
-                    available = float(asset.get("availableBalance", 0))
-                    logger.info("Saldo USDT real en Futures: %.4f USDT", available)
-                    return available
+                    wallet = float(asset.get("walletBalance", 0) or 0)
+                    margin = float(asset.get("marginBalance", wallet) or wallet)
+                    available = float(asset.get("availableBalance", 0) or 0)
+                    # En algunas cuentas USDⓈ-M la API puede devolver wallet/margin=0
+                    # y availableBalance>0. Priorizamos el primer saldo positivo útil.
+                    if margin > 0:
+                        balance = margin
+                        source = "margin"
+                    elif wallet > 0:
+                        balance = wallet
+                        source = "wallet"
+                    elif available > 0:
+                        balance = available
+                        source = "available"
+                    else:
+                        balance = 0.0
+                        source = "none"
+                    logger.info(
+                        "Saldo Binance Futures (USDT): wallet=%.4f | margin=%.4f | available=%.4f | usando=%s",
+                        wallet,
+                        margin,
+                        available,
+                        source,
+                    )
+                    return balance
+            return None
+
+        try:
+            balances = self._client.safe_call(self._client.client.futures_account_balance)
+            balance = _extract_usdt_balance(balances)
+            if balance is not None:
+                return balance
+
+            # Fallback para cuentas/endpoints donde balance viene en futures_account().
+            account = self._client.safe_call(self._client.client.futures_account)
+            assets = account.get("assets", []) if isinstance(account, dict) else []
+            balance = _extract_usdt_balance(assets)
+            if balance is not None:
+                return balance
+
+            logger.warning(
+                "get_usdt_balance: no se encontró asset USDT en respuesta de Binance Futures."
+            )
+        except _BinExc as exc:
+            if exc.code == -2015:
+                logger.debug(
+                    "get_usdt_balance: sin permisos (-2015). "
+                    "Verificá en Binance → API Management → habilitá 'Futures' y quitá restricción de IP."
+                )
+            elif exc.code == -1021:
+                logger.warning(
+                    "get_usdt_balance: timestamp fuera de ventana (-1021). "
+                    "Sincronizá el reloj del sistema y reintentá."
+                )
+            else:
+                logger.warning("No se pudo obtener saldo de Binance: %s", exc)
         except Exception as exc:
-            logger.warning("No se pudo obtener saldo de Binance: %s", exc)
+            logger.warning("No se pudo obtener saldo de Binance (error inesperado): %s", exc)
         return None
 
 

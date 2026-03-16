@@ -81,11 +81,28 @@ class AgentState:
     # Historial de logs del ciclo actual (últimas N entradas)
     cycle_logs: List[str] = field(default_factory=list)
 
+    # Historial de RSI por símbolo (últimos 5 valores) para detectar momentum
+    rsi_history: Dict[str, List[float]] = field(default_factory=dict)
+
     def update_market(self, snapshot: MarketSnapshot) -> None:
         self.market_snapshots[snapshot.symbol] = snapshot
 
     def update_signal(self, signal: SignalState) -> None:
         self.signals[signal.symbol] = signal
+
+    def push_rsi(self, symbol: str, rsi: float, maxlen: int = 5) -> None:
+        """Agrega el RSI actual al historial del símbolo (últimos maxlen valores)."""
+        hist = self.rsi_history.setdefault(symbol, [])
+        hist.append(round(rsi, 2))
+        if len(hist) > maxlen:
+            self.rsi_history[symbol] = hist[-maxlen:]
+
+    def get_rsi_momentum(self, symbol: str) -> float:
+        """Retorna el cambio total del RSI en el historial (positivo=subiendo, negativo=bajando)."""
+        hist = self.rsi_history.get(symbol, [])
+        if len(hist) < 2:
+            return 0.0
+        return round(hist[-1] - hist[0], 2)
 
     def add_log(self, msg: str, max_logs: int = 100) -> None:
         self.cycle_logs.append(f"[{time.strftime('%H:%M:%S')}] {msg}")

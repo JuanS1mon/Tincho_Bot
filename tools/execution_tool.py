@@ -56,8 +56,7 @@ class ExecutionTool:
         )
 
         if dry_run:
-            # En modo simulación registramos como si hubiera entrado al precio de SL/TP
-            entry_price = risk_params.stop_loss_price  # placeholder
+            entry_price = risk_params.entry_price  # precio real de mercado en el momento de la señal
             self._register_position(symbol, direction, entry_price, risk_params, strategy, order_id="DRY_RUN")
             return {"mode": "dry_run", "symbol": symbol, "direction": direction}
 
@@ -73,6 +72,11 @@ class ExecutionTool:
                 else self._orders.open_short(symbol, risk_params.quantity)
             )
             entry_price = float(main_order.get("avgPrice", 0) or main_order.get("price", 0))
+            if entry_price <= 0:
+                entry_price = self._resolve_entry_price(symbol, direction)
+            if entry_price <= 0:
+                # Último fallback defensivo: evita entry_price=0 en el portafolio.
+                entry_price = risk_params.entry_price
             order_id = str(main_order.get("orderId", ""))
 
             # 3. Stop Loss
@@ -106,6 +110,48 @@ class ExecutionTool:
         except Exception as exc:
             error_logger.error("ExecutionTool.execute(%s %s) error: %s", direction, symbol, exc)
             return None
+
+    def _resolve_entry_price(self, symbol: str, direction: str) -> float:
+        """
+        Resuelve precio de entrada cuando futures_create_order no devuelve avgPrice/price.
+        """
+        # 1) Desde posición abierta en Binance
+        try:
+            positions = self._orders._client.safe_call(
+                self._orders._client.client.futures_position_information,
+                symbol=symbol,
+            )
+            for p in positions:
+                amt = float(p.get("positionAmt", 0) or 0)
+                if direction == "LONG" and amt <= 0:
+                    continue
+                if direction == "SHORT" and amt >= 0:
+                    continue
+                entry = float(p.get("entryPrice", 0) or 0)
+                if entry > 0:
+                    return entry
+        except Exception:
+            pass
+
+        # 2) Desde últimos fills de la cuenta
+        try:
+            trades = self._orders._client.safe_call(
+                self._orders._client.client.futures_account_trades,
+                symbol=symbol,
+                limit=20,
+            )
+            want_buyer = direction == "LONG"
+            for t in sorted(trades, key=lambda x: x.get("time", 0), reverse=True):
+                buyer = bool(t.get("buyer"))
+                if buyer != want_buyer:
+                    continue
+                px = float(t.get("price", 0) or 0)
+                if px > 0:
+                    return px
+        except Exception:
+            pass
+
+        return 0.0
 
     def _register_position(
         self,

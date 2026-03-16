@@ -131,6 +131,46 @@ class LLMClient:
         )
         return decision
 
+    def market_overview(self, user_prompt: str) -> Optional[Dict[str, Any]]:
+        """
+        Envía un prompt de análisis global de mercado y retorna solo
+        {"reasoning": str, "parameter_adjustments": dict | None}.
+        No requiere los campos de trade (trade/symbol/direction/etc.).
+        """
+        try:
+            response = self._client.chat.completions.create(
+                model=settings.ai_model,
+                messages=[
+                    {"role": "system", "content": agent_config.system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.3,
+                max_tokens=256,
+            )
+            raw = response.choices[0].message.content or ""
+        except Exception as exc:
+            error_logger.error("LLMClient.market_overview error: %s", exc)
+            return None
+
+        # Parsear JSON simplificado
+        cleaned = re.sub(r"```(?:json)?", "", raw).strip().rstrip("`").strip()
+        match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+        if not match:
+            error_logger.warning("market_overview: no JSON en respuesta: %s", raw[:200])
+            return None
+        try:
+            data = json.loads(match.group())
+        except json.JSONDecodeError as exc:
+            error_logger.warning("market_overview: JSON inválido: %s", exc)
+            return None
+
+        reasoning = str(data.get("reasoning", ""))[:200]
+        raw_adj = data.get("parameter_adjustments")
+        param_adj = raw_adj if isinstance(raw_adj, dict) else None
+
+        logger.info("🌍 Tincho1 market overview: %s | params=%s", reasoning, param_adj)
+        return {"reasoning": reasoning, "parameter_adjustments": param_adj}
+
 
 # Instancia global
 llm_client = LLMClient()

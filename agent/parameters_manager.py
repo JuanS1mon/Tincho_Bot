@@ -8,7 +8,7 @@ Al reiniciar el agente, los parámetros se restauran desde la DB con los
 últimos valores que la IA determinó como óptimos.
 
 Parámetros ajustables:
-  - leverage               (1 – 10)
+   - leverage               (1 – 20)
   - max_capital_per_trade  (0.05 – 0.50) — fracción del capital asignado al símbolo
   - risk_per_trade         (0.005 – 0.03)
   - stop_loss              (0.01 – 0.05)
@@ -49,10 +49,13 @@ class DynamicParams:
     take_profit: float            = field(default_factory=lambda: settings.take_profit)
     timeframe: str                = field(default_factory=lambda: settings.timeframe)
     analysis_interval_seconds: int = field(default_factory=lambda: settings.analysis_interval_seconds)
-    sma20_proximity_pct: float    = 0.025  # Máx distancia precio-SMA20 para pullback
-    rsi_long_threshold: float     = 50.0   # RSI mínimo para señal LONG
-    rsi_short_threshold: float    = 45.0   # RSI máximo para señal SHORT
+    sma20_proximity_pct: float    = 0.05   # Máx distancia precio-SMA20 para pullback
+    rsi_long_threshold: float     = 40.0   # RSI mínimo para señal LONG
+    rsi_short_threshold: float    = 52.0   # RSI máximo para señal SHORT
     liquidation_dominance_ratio: float = 1.5  # Ratio para declarar lado dominante en liquidaciones
+    rsi_momentum_boost: float = 8.0    # Reducción del umbral LONG cuando RSI viene subiendo (puntos)
+    rsi_overbought: float = 78.0       # RSI máximo para aplicar momentum boost (protege contra sobrecompra)
+    tryhard_mode: bool = False         # Relaja filtros de volumen y proximidad para operar más fácil
 
     # Metadatos de ajustes
     adjustment_count: int         = 0

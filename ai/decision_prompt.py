@@ -33,6 +33,9 @@ def build_decision_prompt(
     simulation: SimulationResult,
     portfolio: Optional[PortfolioTool] = None,
     dynamic_params: Optional[Any] = None,   # DynamicParams desde parameters_manager
+    recent_trades: Optional[list] = None,    # Últimos trades desde MongoDB
+    target_symbol: str = "",                 # símbolo específico a evaluar
+    target_direction: str = "",              # dirección específica a evaluar
 ) -> str:
     """
     Construye el prompt de usuario con todos los datos de mercado, simulación,
@@ -44,12 +47,24 @@ def build_decision_prompt(
     num_symbols = max(1, len(list(market_data.keys())) or 2)
     symbol_alloc = _portfolio.capital / num_symbols
 
+    # Lista explícita de posiciones abiertas por símbolo
+    open_pos_lines = []
+    for sym in market_data.keys():
+        if _portfolio.has_open_position(sym):
+            pos = _portfolio.positions[sym]
+            open_pos_lines.append(f"  {sym}: OPEN ({pos.direction}) entry={pos.entry_price:.4f}")
+        else:
+            open_pos_lines.append(f"  {sym}: NO open position (free to trade)")
+    open_pos_detail = "\n".join(open_pos_lines)
+
     portfolio_block = f"""Portfolio status:
 - total_capital:     {_portfolio.capital:.2f} USDT  (grows incrementally with profits)
 - per_symbol_alloc:  {symbol_alloc:.2f} USDT  (capital / {num_symbols} symbols, 50% each)
 - open_positions:    {len(_portfolio.positions)}
 - total_pnl:         {_portfolio.total_pnl:.2f} USDT  ({_portfolio.total_pnl / _portfolio.initial_capital * 100:.1f}% desde inicio)
-- win_rate:          {_portfolio.win_rate:.2%}  ({_portfolio.winning_trades}/{_portfolio.total_trades} trades)"""
+- win_rate:          {_portfolio.win_rate:.2%}  ({_portfolio.winning_trades}/{_portfolio.total_trades} trades)
+Open positions per symbol:
+{open_pos_detail}"""
 
     # ── Parámetros actuales del agente ────────────────────────────────────────
     if dynamic_params is not None:
@@ -98,8 +113,29 @@ Simulation result ({simulation.direction}):
   sharpe_ratio:      {simulation.sharpe_ratio:.4f}
   monte_carlo_ruin:  {simulation.mc_ruin_probability:.2%}"""
 
+    # ── Historial de trades recientes ───────────────────────────────────────────
+    trades_block = ""
+    if recent_trades:
+        rows = []
+        for t in recent_trades[:10]:
+            rows.append(
+                f"  {t.get('symbol','?')} {t.get('direction','?')} | "
+                f"entry={t.get('entry_price',0):.4f} exit={t.get('exit_price',0):.4f} | "
+                f"pnl={t.get('pnl',0):+.4f} USDT ({t.get('pnl_pct',0):+.2f}%) | "
+                f"{t.get('strategy','?')}"
+            )
+        trades_block = "\nRecent trade history (newest first):\n" + "\n".join(rows)
+
     # ── Instrucción de respuesta ──────────────────────────────────────────────
-    response_instruction = """
+    target_line = ""
+    if target_symbol and target_direction:
+        target_line = f"""
+⚠️  DECISION TARGET: You MUST decide whether to open a {target_direction} trade on {target_symbol}.
+    The simulation above is for {target_symbol} {target_direction}. Evaluate ONLY this symbol+direction.
+    Set \"symbol\": \"{target_symbol}\" and \"direction\": \"{target_direction}\" in your JSON.
+"""
+
+    response_instruction = target_line + """
 Based on ALL data above, decide if a futures trade should be opened AND if any parameters should be adjusted.
 
 Return ONLY this JSON (no markdown, no explanation):
@@ -126,5 +162,71 @@ Note: include in parameter_adjustments ONLY keys you want to change. Use null if
 
 Market data:
 {market_section}
-{sim_block}
+{sim_block}{trades_block}
 {response_instruction}"""
+
+
+def build_market_overview_prompt(
+    all_market_data: Dict[str, Dict[str, Any]],
+    dynamic_params: Optional[Any],
+    portfolio_state: Dict[str, Any],
+) -> str:
+    """
+    Prompt para que Tincho1 evalúe las condiciones globales del mercado
+    y sugiera ajustes de parámetros sin necesidad de evaluar un trade específico.
+    """
+    # Bloque de portafolio
+    pnl_pct = portfolio_state["total_pnl"] / max(portfolio_state["initial_capital"], 1) * 100
+    port_block = (
+        f"Portfolio: capital={portfolio_state['capital']:.2f} USDT | "
+        f"pnl={portfolio_state['total_pnl']:+.4f} USDT ({pnl_pct:+.2f}%) | "
+        f"win_rate={portfolio_state['win_rate']*100:.1f}% | "
+        f"trades={portfolio_state['total_trades']} | "
+        f"open_positions={portfolio_state['open_positions']}"
+    )
+
+    # Bloque de parámetros actuales
+    if dynamic_params is not None:
+        p = dynamic_params
+        params_block = (
+            f"Current parameters: leverage={p.leverage}x | "
+            f"sl={p.stop_loss:.1%} | tp={p.take_profit:.1%} | "
+            f"max_cap={p.max_capital_per_trade:.0%} | "
+            f"risk={p.risk_per_trade:.1%} | tf={p.timeframe} | "
+            f"adjustments_by_AI={p.adjustment_count} | last_reason={p.last_adjustment_reason or 'none'}"
+        )
+    else:
+        params_block = ""
+
+    # Bloque de mercado
+    market_lines = []
+    for sym, data in all_market_data.items():
+        market_lines.append(
+            f"{sym}: price={data.get('price', 0):.4f} | trend={data.get('trend', '?')} | "
+            f"rsi={data.get('rsi', 0):.1f} | vol={data.get('volume_trend', '?')} | "
+            f"oi={data.get('oi_trend', '?')} | funding={data.get('funding_rate', 0)*100:.4f}%"
+        )
+    market_block = "\n".join(market_lines) if market_lines else "No market data available."
+
+    return f"""MARKET OVERVIEW ANALYSIS — Do NOT evaluate a specific trade.
+Your task: assess overall market conditions and suggest parameter adjustments if clearly warranted.
+
+{port_block}
+{params_block}
+
+Current market snapshot:
+{market_block}
+
+Return ONLY this JSON (no markdown, no explanation):
+{{
+  "reasoning": "brief market assessment max 120 chars",
+  "parameter_adjustments": null or {{
+    "leverage": int,
+    "max_capital_per_trade": float,
+    "stop_loss": float,
+    "take_profit": float,
+    "timeframe": "string"
+  }}
+}}
+Use null for parameter_adjustments if the market is mixed or no clear adjustment is justified.
+Only change parameters if you see STRONG and CLEAR evidence in the data."""

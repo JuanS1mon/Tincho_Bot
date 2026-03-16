@@ -10,6 +10,7 @@ Gestiona la ejecución de órdenes en Binance Futures:
 """
 from __future__ import annotations
 
+from decimal import Decimal, ROUND_DOWN
 from typing import Any, Dict, Optional
 
 from binance.exceptions import BinanceAPIException
@@ -24,6 +25,49 @@ class OrderManager:
 
     def __init__(self) -> None:
         self._client = futures_client
+        self._symbol_rules_cache: Dict[str, Dict[str, Decimal]] = {}
+
+    def _get_symbol_rules(self, symbol: str) -> Dict[str, Decimal]:
+        """Obtiene stepSize/minQty de LOT_SIZE para normalizar quantities."""
+        symbol = symbol.upper()
+        cached = self._symbol_rules_cache.get(symbol)
+        if cached is not None:
+            return cached
+
+        info = self._client.safe_call(self._client.client.futures_exchange_info)
+        symbols = info.get("symbols", []) if isinstance(info, dict) else []
+        for s in symbols:
+            if s.get("symbol") != symbol:
+                continue
+            for f in s.get("filters", []):
+                if f.get("filterType") == "LOT_SIZE":
+                    rules = {
+                        "step_size": Decimal(str(f.get("stepSize", "1"))),
+                        "min_qty": Decimal(str(f.get("minQty", "0"))),
+                    }
+                    self._symbol_rules_cache[symbol] = rules
+                    return rules
+            break
+
+        # Fallback defensivo si Binance no devuelve filtros del símbolo.
+        fallback = {"step_size": Decimal("0.0001"), "min_qty": Decimal("0")}
+        self._symbol_rules_cache[symbol] = fallback
+        return fallback
+
+    def _normalize_quantity(self, symbol: str, quantity: float) -> float:
+        """Ajusta qty al múltiplo válido de stepSize usando redondeo hacia abajo."""
+        q = Decimal(str(quantity))
+        rules = self._get_symbol_rules(symbol)
+        step = rules["step_size"]
+        min_qty = rules["min_qty"]
+
+        if step <= 0:
+            return float(q)
+
+        normalized = (q / step).quantize(Decimal("1"), rounding=ROUND_DOWN) * step
+        if normalized < min_qty:
+            normalized = min_qty
+        return float(normalized)
 
     # ── Apalancamiento ────────────────────────────────────────────────────────
 
@@ -55,16 +99,17 @@ class OrderManager:
         self, symbol: str, side: str, quantity: float
     ) -> Dict[str, Any]:
         try:
+            normalized_qty = self._normalize_quantity(symbol, quantity)
             order = self._client.safe_call(
                 self._client.client.futures_create_order,
                 symbol=symbol,
                 side=side,
                 type="MARKET",
-                quantity=quantity,
+                quantity=normalized_qty,
             )
             logger.info(
-                "Orden market ejecutada: %s %s | qty=%s | orderId=%s",
-                side, symbol, quantity, order.get("orderId"),
+                "Orden market ejecutada: %s %s | qty=%.8f (raw=%.8f) | orderId=%s",
+                side, symbol, normalized_qty, quantity, order.get("orderId"),
             )
             return order
         except BinanceAPIException as exc:
@@ -82,13 +127,14 @@ class OrderManager:
         """
         close_side = "SELL" if side == "BUY" else "BUY"
         try:
+            normalized_qty = self._normalize_quantity(symbol, quantity)
             order = self._client.safe_call(
                 self._client.client.futures_create_order,
                 symbol=symbol,
                 side=close_side,
                 type="STOP_MARKET",
                 stopPrice=round(stop_price, 2),
-                quantity=quantity,
+                quantity=normalized_qty,
                 reduceOnly="true",
             )
             logger.info("Stop Loss colocado: %s @ %.2f", symbol, stop_price)
@@ -106,13 +152,14 @@ class OrderManager:
         """
         close_side = "SELL" if side == "BUY" else "BUY"
         try:
+            normalized_qty = self._normalize_quantity(symbol, quantity)
             order = self._client.safe_call(
                 self._client.client.futures_create_order,
                 symbol=symbol,
                 side=close_side,
                 type="TAKE_PROFIT_MARKET",
                 stopPrice=round(tp_price, 2),
-                quantity=quantity,
+                quantity=normalized_qty,
                 reduceOnly="true",
             )
             logger.info("Take Profit colocado: %s @ %.2f", symbol, tp_price)
@@ -130,13 +177,14 @@ class OrderManager:
         """
         close_side = "SELL" if side == "BUY" else "BUY"
         try:
+            normalized_qty = self._normalize_quantity(symbol, quantity)
             order = self._client.safe_call(
                 self._client.client.futures_create_order,
                 symbol=symbol,
                 side=close_side,
                 type="TRAILING_STOP_MARKET",
                 callbackRate=round(callback_rate, 1),
-                quantity=quantity,
+                quantity=normalized_qty,
                 reduceOnly="true",
             )
             logger.info("Trailing Stop %s @ callback=%.1f%%", symbol, callback_rate)
@@ -154,15 +202,16 @@ class OrderManager:
         """
         close_side = "SELL" if side == "BUY" else "BUY"
         try:
+            normalized_qty = self._normalize_quantity(symbol, quantity)
             order = self._client.safe_call(
                 self._client.client.futures_create_order,
                 symbol=symbol,
                 side=close_side,
                 type="MARKET",
-                quantity=quantity,
+                quantity=normalized_qty,
                 reduceOnly="true",
             )
-            logger.info("Posición cerrada: %s | qty=%s", symbol, quantity)
+            logger.info("Posición cerrada: %s | qty=%.8f (raw=%.8f)", symbol, normalized_qty, quantity)
             return order
         except BinanceAPIException as exc:
             error_logger.error("close_position(%s) error: %s", symbol, exc)

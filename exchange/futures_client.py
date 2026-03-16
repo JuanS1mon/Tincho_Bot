@@ -49,6 +49,15 @@ class FuturesClient:
             api_secret=settings.binance_secret_key,
             testnet=settings.binance_testnet,
         )
+        # Ajusta el offset de reloj local vs Binance para endpoints SIGNED (timestamp).
+        try:
+            server_time = self._client.futures_time().get("serverTime")
+            if server_time is None:
+                raise ValueError("serverTime no presente en futures_time")
+            self._client.timestamp_offset = int(server_time) - int(time.time() * 1000)
+            logger.info("Offset horario Binance sincronizado: %d ms", self._client.timestamp_offset)
+        except Exception as exc:
+            logger.warning("No se pudo sincronizar offset horario de Binance: %s", exc)
         # Verificar conectividad
         self._client.ping()
         logger.info("Conexión a Binance exitosa.")
