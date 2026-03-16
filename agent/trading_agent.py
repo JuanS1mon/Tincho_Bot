@@ -51,6 +51,8 @@ class TradingAgent:
         self._prev_funding: Dict[str, float] = {}
         self._prev_price: Dict[str, float] = {}
         self._calm_cycles: int = 0
+        self._hot_cycles: int = 0
+        self._risk_cycles: int = 0
 
         # Restaurar parámetros dinámicos desde MongoDB (ajustes previos de la IA)
         parameters_manager.load_from_db()
@@ -175,8 +177,8 @@ class TradingAgent:
             except Exception as exc:
                 error_logger.error("Error en market_overview_adjust: %s", exc)
 
-        # Si estamos en TRYHARD y el mercado se calma, bajar automáticamente a CHILL.
-        self._maybe_auto_switch_tryhard_to_chill(all_market_data, signals)
+        # Auto-gestión de modo: TRYHARD / CHILL / PUTITA según mercado y riesgo.
+        self._maybe_auto_switch_mode(all_market_data, signals)
 
         for symbol, signal in signals.items():
             if signal.signal == "NO_SIGNAL":
@@ -728,64 +730,112 @@ class TradingAgent:
             self._prev_funding[symbol] = float(data.get("funding_rate", 0.0) or 0.0)
             self._prev_price[symbol] = float(data.get("price", 0.0) or 0.0)
 
-    def _maybe_auto_switch_tryhard_to_chill(self, all_market_data: Dict[str, dict], signals: Dict[str, TradingSignal]) -> None:
-        """
-        En modo TRYHARD, baja a CHILL automáticamente cuando el mercado está calmo.
-
-        Criterio de calma (conservador):
-          - Sin señales activas en los símbolos monitoreados,
-          - RSI en zona media (42-58),
-          - funding bajo,
-          - sin posiciones abiertas (evita cambiar reglas a mitad de trade).
-        Requiere 2 ciclos consecutivos para confirmar.
-        """
+    def _current_mode(self) -> str:
         p = parameters_manager.params
-        if not p.tryhard_mode:
-            self._calm_cycles = 0
+        if p.tryhard_mode or p.leverage >= 15:
+            return "tryhard"
+        if p.leverage <= 5 and p.max_capital_per_trade <= 0.15 and p.risk_per_trade <= 0.005:
+            return "putita"
+        return "chill"
+
+    def _apply_mode(self, mode: str, reason: str) -> None:
+        presets = {
+            "tryhard": {"leverage": 20, "stop_loss": 0.04, "take_profit": 0.00, "max_capital_per_trade": 0.50, "risk_per_trade": 0.03},
+            "chill":   {"leverage": 10, "stop_loss": 0.03, "take_profit": 0.00, "max_capital_per_trade": 0.35, "risk_per_trade": 0.02},
+            "putita":  {"leverage": 5,  "stop_loss": 0.015, "take_profit": 0.00, "max_capital_per_trade": 0.15, "risk_per_trade": 0.005},
+        }
+        if mode not in presets:
             return
 
+        changed = parameters_manager.apply_adjustments(
+            presets[mode],
+            reason=f"Auto mode switch ({mode}): {reason}",
+        )
+        parameters_manager.params.tryhard_mode = mode == "tryhard"
+        msg = f"🔄 Auto-modo -> {mode.upper()} ({reason})"
+        logger.info(msg + (" | parámetros actualizados" if changed else " | ya estaba en valores objetivo"))
+        self.state.add_log(msg)
+
+    def _maybe_auto_switch_mode(self, all_market_data: Dict[str, dict], signals: Dict[str, TradingSignal]) -> None:
+        """
+        Gestión automática de los 3 modos:
+          - tryhard: mercado con momentum y riesgo controlado.
+          - chill: mercado normal/calmado.
+          - putita: prioridad absoluta en preservar capital.
+        """
         if not all_market_data:
             self._calm_cycles = 0
+            self._hot_cycles = 0
+            self._risk_cycles = 0
             return
 
-        if portfolio_tool.positions:
-            self._calm_cycles = 0
-            return
+        mode = self._current_mode()
 
-        no_active_signals = all(
-            (signals.get(sym).signal if sym in signals else "NO_SIGNAL") == "NO_SIGNAL"
-            for sym in all_market_data.keys()
+        # Señales y métricas agregadas del ciclo
+        active_signals = [s for s in signals.values() if s.signal != "NO_SIGNAL"]
+        no_active_signals = len(active_signals) == 0
+        high_conf_signal = any(s.confidence >= 0.70 for s in active_signals)
+
+        rsi_values = [float(d.get("rsi", 0.0) or 0.0) for d in all_market_data.values()]
+        funding_values = [abs(float(d.get("funding_rate", 0.0) or 0.0)) for d in all_market_data.values()]
+
+        rsi_calm = all(42.0 <= r <= 58.0 for r in rsi_values)
+        rsi_extreme = any(r <= 28.0 or r >= 72.0 for r in rsi_values)
+        funding_calm = all(f <= 0.01 for f in funding_values)
+        funding_stress = any(f >= 0.03 for f in funding_values)
+
+        # Riesgo alto => PUTITA rápido
+        risk_on = (
+            portfolio_tool.circuit_breaker_active
+            or portfolio_tool.consecutive_losses >= 2
+            or portfolio_tool.session_drawdown_pct <= -0.03
+            or rsi_extreme
+            or funding_stress
         )
-        rsi_calm = all(42.0 <= float(data.get("rsi", 0.0) or 0.0) <= 58.0 for data in all_market_data.values())
-        funding_calm = all(abs(float(data.get("funding_rate", 0.0) or 0.0)) <= 0.01 for data in all_market_data.values())
+        if risk_on:
+            self._risk_cycles += 1
+        else:
+            self._risk_cycles = 0
 
-        if no_active_signals and rsi_calm and funding_calm:
+        if self._risk_cycles >= 1 and mode != "putita":
+            self._apply_mode("putita", "riesgo alto detectado")
+            self._calm_cycles = 0
+            self._hot_cycles = 0
+            return
+
+        # Mercado calmo => CHILL (si no estamos en riesgo)
+        calm_on = no_active_signals and rsi_calm and funding_calm
+        if calm_on:
             self._calm_cycles += 1
         else:
             self._calm_cycles = 0
-            return
 
-        if self._calm_cycles < 2:
-            return
-
-        # Preset CHILL automático
-        changed = parameters_manager.apply_adjustments(
-            {
-                "leverage": 10,
-                "stop_loss": 0.03,
-                "take_profit": 0.00,
-                "max_capital_per_trade": 0.35,
-                "risk_per_trade": 0.02,
-            },
-            reason="Auto switch TRYHARD→CHILL por mercado calmo",
+        # Mercado con impulso => TRYHARD
+        hot_on = (
+            high_conf_signal
+            and not funding_stress
+            and portfolio_tool.consecutive_losses == 0
+            and portfolio_tool.session_drawdown_pct > -0.01
+            and not rsi_extreme
         )
+        if hot_on:
+            self._hot_cycles += 1
+        else:
+            self._hot_cycles = 0
 
-        p.tryhard_mode = False
-        self._calm_cycles = 0
+        if mode == "tryhard" and self._calm_cycles >= 2:
+            self._apply_mode("chill", "mercado calmo por 2 ciclos")
+            self._calm_cycles = 0
+            return
 
-        msg = "🔄 Auto-modo: TRYHARD → CHILL (mercado calmo detectado)"
-        logger.info(msg + (" | parámetros actualizados" if changed else " | sin cambios numéricos"))
-        self.state.add_log(msg)
+        if mode == "putita" and self._calm_cycles >= 3 and portfolio_tool.consecutive_losses == 0 and portfolio_tool.session_drawdown_pct > -0.01:
+            self._apply_mode("chill", "recuperación tras fase defensiva")
+            self._calm_cycles = 0
+            return
+
+        if mode == "chill" and self._hot_cycles >= 2 and not portfolio_tool.positions:
+            self._apply_mode("tryhard", "momentum fuerte y riesgo controlado")
+            self._hot_cycles = 0
 
     # ── Persistencia de estado ────────────────────────────────────────────────
 
