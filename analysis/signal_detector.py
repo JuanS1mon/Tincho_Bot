@@ -76,12 +76,16 @@ class SignalDetector:
             proximity_ok = True                        # sin restricción de distancia
             oi_rising = oi.trend in ("INCREASING", "STABLE")  # capitulación también válida
         else:
-            proximity_ok = proximity <= p.sma20_proximity_pct
+            # Modo normal: limitamos pullback a una zona más estricta para reducir falsas entradas.
+            # Aunque el parámetro dinámico sea más laxo, aplicamos un techo conservador de 1.5%.
+            max_proximity = min(p.sma20_proximity_pct, 0.015)
+            proximity_ok = proximity < max_proximity
 
         # ── Ajuste dinámico del umbral RSI por momentum ───────────────────────
         # Si el RSI viene subiendo al menos 5 puntos Y no está en sobrecompra,
         # se reduce el umbral de entrada para aprovechar el impulso.
-        effective_long_threshold = p.rsi_long_threshold
+        # Filtro conservador: LONG solo si RSI supera al menos 50.
+        effective_long_threshold = max(p.rsi_long_threshold, 50.0)
         momentum_str = ""
         if rsi_momentum >= 5.0 and ind.rsi <= p.rsi_overbought:
             reduction = min(rsi_momentum * 0.4, p.rsi_momentum_boost)

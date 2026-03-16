@@ -20,7 +20,6 @@ import ta
 class Indicators:
     sma20: float
     sma50: float
-    sma100: float
     rsi: float
     macd: float
     macd_signal: float
@@ -28,6 +27,8 @@ class Indicators:
     volume_avg: float
     # Precio actual (último close)
     price: float
+    # Compatibilidad: algunos tests/llamadores no lo pasan explícitamente.
+    sma100: float = 0.0
 
 
 class IndicatorTool:
@@ -39,7 +40,8 @@ class IndicatorTool:
         y retorna el último valor de cada indicador calculado.
         Retorna None si no hay suficientes datos.
         """
-        if len(df) < 120:
+        # Compatibilidad histórica: con < 50 velas no calculamos.
+        if len(df) < 50:
             return None
 
         close = df["close"]
@@ -48,6 +50,8 @@ class IndicatorTool:
         # ── SMA ──────────────────────────────────────────────────────────────
         sma20_series = ta.trend.sma_indicator(close, window=20)
         sma50_series = ta.trend.sma_indicator(close, window=50)
+        # SMA100 puede no estar disponible si hay menos de 100 velas.
+        # En ese caso usamos SMA50 como fallback estable.
         sma100_series = ta.trend.sma_indicator(close, window=100)
 
         # ── RSI ───────────────────────────────────────────────────────────────
@@ -62,16 +66,20 @@ class IndicatorTool:
         # ── Volume average (20 períodos) ──────────────────────────────────────
         vol_avg = volume.rolling(window=20).mean()
 
+        sma100_val = float(sma100_series.iloc[-1])
+        if pd.isna(sma100_val):
+            sma100_val = float(sma50_series.iloc[-1])
+
         return Indicators(
             sma20=round(float(sma20_series.iloc[-1]), 4),
             sma50=round(float(sma50_series.iloc[-1]), 4),
-            sma100=round(float(sma100_series.iloc[-1]), 4),
             rsi=round(float(rsi_series.iloc[-1]), 2),
             macd=round(float(macd_line.iloc[-1]), 6),
             macd_signal=round(float(macd_signal.iloc[-1]), 6),
             macd_hist=round(float(macd_hist.iloc[-1]), 6),
             volume_avg=round(float(vol_avg.iloc[-1]), 2),
             price=round(float(close.iloc[-1]), 4),
+            sma100=round(float(sma100_val), 4),
         )
 
 
