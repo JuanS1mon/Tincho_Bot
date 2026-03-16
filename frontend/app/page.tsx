@@ -950,7 +950,7 @@ export default function Dashboard() {
       )}
 
       {/* Main content — extra bottom padding for fixed action bar */}
-      <main className="w-full px-4 sm:px-6 lg:px-10 xl:px-16 py-6 space-y-6 pb-28">
+      <main className="w-full px-4 sm:px-6 lg:px-10 xl:px-16 py-6 space-y-6 pb-6">
 
         {!online && <OfflineBanner />}
         {!!agentStatus?.recovered_positions?.length && (
@@ -1332,50 +1332,30 @@ export default function Dashboard() {
         )}
       </main>
 
-      {/* ── Fixed action bar ── */}
-      <div className="fixed bottom-0 left-0 right-0 z-20 border-t border-[var(--border)] bg-[var(--bg)]/95 backdrop-blur-md px-4 py-5">
-        <div className="w-full px-2 sm:px-6 lg:px-10 xl:px-16 flex items-center justify-between gap-6">
+      {/* ── Floating action buttons (BULLISH + BOMBARDA) ── */}
+      <button
+        onClick={() => setShowBullish(true)}
+        title="Compra manual (BULLISH mode)"
+        className="fixed bottom-48 right-20 z-40 w-14 h-14 rounded-full shadow-xl transition-all duration-150 active:scale-95 flex items-center justify-center text-2xl"
+        style={{
+          background: "radial-gradient(circle at 35% 35%, #4ade80, #16a34a 60%, #14532d)",
+          boxShadow: "0 2px 0 #14532d, 0 4px 12px rgba(22,163,74,0.6), inset 0 1px 2px rgba(255,255,255,0.25)",
+        } as React.CSSProperties}
+      >
+        🐂
+      </button>
 
-          {/* BULLISH — botón circular 3D verde */}
-          <button
-            onClick={() => setShowBullish(true)}
-            className="group flex flex-col items-center justify-center gap-1.5 w-32 h-32 sm:w-36 sm:h-36 rounded-full font-black text-white transition-all duration-150 active:scale-95 active:translate-y-1"
-            style={{
-              background: "radial-gradient(circle at 35% 35%, #4ade80, #16a34a 60%, #14532d)",
-              boxShadow: "0 8px 0 #14532d, 0 12px 24px rgba(22,163,74,0.5), inset 0 2px 4px rgba(255,255,255,0.25)",
-            } as React.CSSProperties}
-          >
-            <span className="text-3xl sm:text-4xl drop-shadow">🐂</span>
-            <span className="text-sm sm:text-base tracking-wide drop-shadow-md">BULLISH</span>
-          </button>
-
-          {/* Info central */}
-          <div className="flex-1 text-center text-sm text-[var(--muted)] hidden sm:block">
-            {port ? (
-              <>
-                <div className="text-base font-semibold text-[var(--text)]">{port.available_capital.toFixed(2)} USDT</div>
-                <div className="text-xs mt-0.5">{positionCount} posición{positionCount !== 1 ? "es" : ""} abiertas</div>
-              </>
-            ) : (
-              <span>Conectando...</span>
-            )}
-          </div>
-
-          {/* BOMBARDA — botón circular 3D rojo */}
-          <button
-            onClick={() => { setBombardaResult(null); setShowBombarda(true); }}
-            className="group flex flex-col items-center justify-center gap-1.5 w-32 h-32 sm:w-36 sm:h-36 rounded-full font-black text-white transition-all duration-150 active:scale-95 active:translate-y-1"
-            style={{
-              background: "radial-gradient(circle at 35% 35%, #f87171, #dc2626 60%, #7f1d1d)",
-              boxShadow: "0 8px 0 #7f1d1d, 0 12px 24px rgba(220,38,38,0.5), inset 0 2px 4px rgba(255,255,255,0.2)",
-            } as React.CSSProperties}
-          >
-            <span className="text-3xl sm:text-4xl drop-shadow">💣</span>
-            <span className="text-xs sm:text-sm tracking-wide drop-shadow-md text-center leading-tight">LA<br/>BOMBARDA</span>
-          </button>
-
-        </div>
-      </div>
+      <button
+        onClick={() => { setBombardaResult(null); setShowBombarda(true); }}
+        title="Cerrar todas las posiciones (LA BOMBARDA)"
+        className="fixed bottom-48 right-32 z-40 w-14 h-14 rounded-full shadow-xl transition-all duration-150 active:scale-95 flex items-center justify-center text-2xl animate-pulse"
+        style={{
+          background: "radial-gradient(circle at 35% 35%, #f87171, #dc2626 60%, #7f1d1d)",
+          boxShadow: "0 2px 0 #7f1d1d, 0 4px 12px rgba(220,38,38,0.6), inset 0 1px 2px rgba(255,255,255,0.2)",
+        } as React.CSSProperties}
+      >
+        💣
+      </button>
 
       {/* ── Marquitos Chat ── */}
       <>
