@@ -58,6 +58,9 @@ class PortfolioTool:
     CIRCUIT_BREAKER_THRESHOLD = -0.15
     # Número de pérdidas consecutivas que activa el enfriamiento.
     MAX_CONSECUTIVE_LOSSES = 3
+    # Piso mínimo: permite hasta este % de drawdown antes de tener ganancias.
+    # Evita que el CB se dispare en la primera micro-pérdida del día.
+    CIRCUIT_BREAKER_FLOOR = 0.05
 
     def __init__(self) -> None:
         self.capital: float = settings.initial_capital
@@ -69,6 +72,7 @@ class PortfolioTool:
         # Protecciones anti-pérdida
         self._session_started: bool = False
         self.session_start_capital: float = 0.0   # snapshot al primer sync real
+        self.session_peak_capital: float = 0.0    # máximo histórico de la sesión
         self.consecutive_losses: int = 0          # reinicia en cada trade ganador
 
     def sync_from_exchange(self, force: bool = False) -> None:
@@ -95,8 +99,16 @@ class PortfolioTool:
                 # Primer sync real: tomar snapshot de capital de sesión.
                 if not self._session_started and real_balance > 0:
                     self.session_start_capital = real_balance
+                    self.session_peak_capital = real_balance
                     self._session_started = True
                     logger.info("Session capital snapshot: %.4f USDT", real_balance)
+                # Actualizar el máximo histórico (high-watermark) si el balance subió.
+                elif real_balance > self.session_peak_capital:
+                    logger.info(
+                        "Nuevo máximo de sesión: %.4f USDT (anterior=%.4f)",
+                        real_balance, self.session_peak_capital,
+                    )
+                    self.session_peak_capital = real_balance
                 logger.info(
                     "Capital sincronizado desde Binance Futures: %.4f USDT", real_balance,
                 )
@@ -178,6 +190,9 @@ class PortfolioTool:
 
         # Actualizar capital
         self.capital += pnl
+        # Actualizar high-watermark con el capital post-trade.
+        if self.capital > self.session_peak_capital:
+            self.session_peak_capital = self.capital
         self.total_trades += 1
         if pnl > 0:
             self.winning_trades += 1
@@ -213,8 +228,44 @@ class PortfolioTool:
 
     @property
     def circuit_breaker_active(self) -> bool:
-        """True si el drawdown de sesión supera el umbral máximo."""
-        return self.session_drawdown_pct <= self.CIRCUIT_BREAKER_THRESHOLD
+                """
+                True si el drawdown desde el pico de sesión supera el límite permitido.
+
+                Lógica dinámica (high-watermark):
+                    - Rastreamos el capital máximo de la sesión (session_peak_capital).
+                    - La pérdida máxima tolerada = min(ganancia_acumulada, 15%).
+                    - Piso: siempre se permiten al menos 5% de drawdown antes de tener ganancias
+                        para evitar que el CB se dispare en la primera micro-pérdida.
+
+                Ejemplos:
+                    Ganaste  0% → toleramos hasta 5% de caída desde pico.
+                    Ganaste  3% → toleramos hasta 5% (piso) desde pico.
+                    Ganaste  8% → toleramos hasta 8% desde pico (nunca volverás a pérdida).
+                    Ganaste 15% → toleramos hasta 15% desde pico.
+                    Ganaste 20% → toleramos hasta 15% (cap) desde pico.
+                """
+                if self.session_peak_capital <= 0 or self.session_start_capital <= 0:
+                        return False
+
+                # Ganancia acumulada desde el inicio hasta el pico.
+                gain_pct = (self.session_peak_capital - self.session_start_capital) / self.session_start_capital
+
+                # Límite: el menor entre la ganancia real y el cap de 15%,
+                # con un piso del 5% para cuando aún no hay ganancias significativas.
+                allowed_dd = max(self.CIRCUIT_BREAKER_FLOOR, min(gain_pct, abs(self.CIRCUIT_BREAKER_THRESHOLD)))
+
+                # Drawdown actual desde el pico.
+                dd_from_peak = (self.session_peak_capital - self.capital) / self.session_peak_capital
+
+                if dd_from_peak >= allowed_dd:
+                        logger.warning(
+                                "🚨 Circuit breaker: pico=%.2f USDT | actual=%.2f USDT | "
+                                "caída=%.1f%% | límite=%.1f%% (ganancia acumulada=%.1f%%)",
+                                self.session_peak_capital, self.capital,
+                                dd_from_peak * 100, allowed_dd * 100, gain_pct * 100,
+                        )
+                        return True
+                return False
 
     def has_open_position(self, symbol: str) -> bool:
         return symbol in self.positions
