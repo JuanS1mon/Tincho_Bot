@@ -905,6 +905,50 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* Activos monitoreados */}
+      {agentStatus?.symbols && agentStatus.symbols.length > 0 && (
+        <div className="w-full px-4 sm:px-6 lg:px-10 xl:px-16 pb-2">
+          <div className="flex items-center gap-2 flex-wrap px-4 py-2 rounded-lg bg-slate-800/40 border border-slate-700/40">
+            <span className="text-[11px] font-semibold uppercase tracking-widest text-[var(--muted)]">Activos:</span>
+            {agentStatus.symbols.map(sym => {
+              const snap = snapshots[sym];
+              const shortName = sym.replace("USDT", "");
+              const hasPos = port?.positions?.[sym] != null;
+              const trendColor = !snap
+                ? "text-slate-400"
+                : snap.trend === "BULLISH" ? "text-green-400"
+                : snap.trend === "BEARISH" ? "text-red-400"
+                : "text-yellow-400";
+              const borderColor = !snap
+                ? "border-slate-600/40"
+                : snap.trend === "BULLISH" ? "border-green-500/30"
+                : snap.trend === "BEARISH" ? "border-red-500/30"
+                : "border-yellow-500/30";
+              const arrow = !snap ? "·" : snap.trend === "BULLISH" ? "▲" : snap.trend === "BEARISH" ? "▼" : "→";
+              return (
+                <span
+                  key={sym}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-mono border bg-black/20 ${trendColor} ${borderColor}`}
+                >
+                  <span className="font-bold">{shortName}</span>
+                  <span className="text-[10px] opacity-80">{arrow}</span>
+                  {snap ? (
+                    <span className="text-[10px] opacity-70">
+                      ${snap.price.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: snap.price >= 100 ? 2 : 4 })}
+                    </span>
+                  ) : (
+                    <span className="text-[10px] opacity-40">esperando…</span>
+                  )}
+                  {hasPos && (
+                    <span className="ml-0.5 w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse inline-block" title="Posición abierta" />
+                  )}
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Main content — extra bottom padding for fixed action bar */}
       <main className="w-full px-4 sm:px-6 lg:px-10 xl:px-16 py-6 space-y-6 pb-28">
 
