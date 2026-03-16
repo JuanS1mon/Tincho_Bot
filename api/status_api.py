@@ -748,9 +748,9 @@ async def chat_with_tincho2(req: ChatRequest) -> Dict[str, Any]:
                 modo = "putita"
             if modo:
                 presets = {
-                    "tryhard": {"leverage": 20, "stop_loss": 0.04, "take_profit": 0.15, "max_capital_per_trade": 0.50, "risk_per_trade": 0.03},
-                    "chill":   {"leverage": 10, "stop_loss": 0.03, "take_profit": 0.12, "max_capital_per_trade": 0.35, "risk_per_trade": 0.02},
-                    "putita":  {"leverage": 5,  "stop_loss": 0.015, "take_profit": 0.06, "max_capital_per_trade": 0.15, "risk_per_trade": 0.005},
+                    "tryhard": {"leverage": 20, "stop_loss": 0.04, "take_profit": 0.00, "max_capital_per_trade": 0.50, "risk_per_trade": 0.03},
+                    "chill":   {"leverage": 10, "stop_loss": 0.03, "take_profit": 0.00, "max_capital_per_trade": 0.35, "risk_per_trade": 0.02},
+                    "putita":  {"leverage": 5,  "stop_loss": 0.015, "take_profit": 0.00, "max_capital_per_trade": 0.15, "risk_per_trade": 0.005},
                 }
                 adjustments.update(presets[modo])
             changed = parameters_manager.apply_adjustments(

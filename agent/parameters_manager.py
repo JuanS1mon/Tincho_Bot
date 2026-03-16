@@ -12,7 +12,7 @@ Parámetros ajustables:
   - max_capital_per_trade  (0.05 – 0.50) — fracción del capital asignado al símbolo
   - risk_per_trade         (0.005 – 0.03)
   - stop_loss              (0.01 – 0.05)
-  - take_profit            (0.02 – 0.15)
+    - take_profit            (0.00 – 0.15, donde 0 = sin límite de ganancia)
   - timeframe              (1m | 3m | 5m | 15m | 30m | 1h | 2h | 4h)
   - analysis_interval_seconds (180 – 3600)
 """
@@ -167,9 +167,10 @@ class ParametersManager:
     def summary(self) -> str:
         """Resumen compacto de los parámetros actuales."""
         p = self.params
+        tp_label = "OFF" if p.take_profit <= 0 else f"{p.take_profit:.1%}"
         return (
             f"leverage={p.leverage}x | max_cap={p.max_capital_per_trade:.0%} | "
-            f"SL={p.stop_loss:.1%} TP={p.take_profit:.1%} | "
+            f"SL={p.stop_loss:.1%} TP={tp_label} | "
             f"tf={p.timeframe} | interval={p.analysis_interval_seconds}s | "
             f"ajustes_IA={p.adjustment_count}"
         )

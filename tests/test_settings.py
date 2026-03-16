@@ -62,8 +62,8 @@ class TestSettings:
         assert s.mongo_uri.startswith("mongodb://") or s.mongo_uri.startswith("mongodb+srv://")
 
     def test_take_profit_mayor_que_stop_loss_desde_env(self):
-        """El TP del .env activo siempre debe ser mayor que el SL."""
+        """El TP del .env puede ser > SL o 0 cuando está deshabilitado."""
         from config.settings import settings
-        assert settings.take_profit > settings.stop_loss, (
-            f"TAKE_PROFIT ({settings.take_profit}) debe ser mayor que STOP_LOSS ({settings.stop_loss})"
+        assert settings.take_profit == 0 or settings.take_profit > settings.stop_loss, (
+            f"TAKE_PROFIT ({settings.take_profit}) debe ser 0 (OFF) o mayor que STOP_LOSS ({settings.stop_loss})"
         )

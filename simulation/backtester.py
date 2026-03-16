@@ -61,29 +61,30 @@ class Backtester:
 
         for i in range(len(df) - 1):
             entry = df["close"].iloc[i]
+            has_tp = _tp > 0
 
             if direction == "LONG":
                 sl = entry * (1 - _sl)
-                tp = entry * (1 + _tp)
+                tp = entry * (1 + _tp) if has_tp else 0.0
                 next_low = df["low"].iloc[i + 1]
                 next_high = df["high"].iloc[i + 1]
 
                 if next_low <= sl:
                     pnl_pct = -_sl
-                elif next_high >= tp:
+                elif has_tp and next_high >= tp:
                     pnl_pct = _tp
                 else:
                     # Cierre al precio de cierre de la siguiente vela
                     pnl_pct = (df["close"].iloc[i + 1] - entry) / entry
             else:  # SHORT
                 sl = entry * (1 + _sl)
-                tp = entry * (1 - _tp)
+                tp = entry * (1 - _tp) if has_tp else 0.0
                 next_high = df["high"].iloc[i + 1]
                 next_low = df["low"].iloc[i + 1]
 
                 if next_high >= sl:
                     pnl_pct = -_sl
-                elif next_low <= tp:
+                elif has_tp and next_low <= tp:
                     pnl_pct = _tp
                 else:
                     pnl_pct = (entry - df["close"].iloc[i + 1]) / entry

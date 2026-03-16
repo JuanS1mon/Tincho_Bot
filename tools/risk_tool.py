@@ -109,13 +109,15 @@ class RiskTool:
         # ── Calcular SL / TP ──────────────────────────────────────────────────
         sl_price, tp_price = self._calc_sl_tp(direction, entry_price)
 
-        # ── Risk/Reward mínimo: 1:2 ───────────────────────────────────────────
+        # ── Risk/Reward mínimo: 1:2 (solo cuando TP está habilitado) ─────────
         risk = abs(entry_price - sl_price)
-        reward = abs(tp_price - entry_price)
-        rr_ratio = reward / risk if risk > 0 else 0
-
-        if rr_ratio < 2.0:
-            return self._reject(f"Risk/Reward ratio insuficiente: {rr_ratio:.2f} (mínimo 2.0)")
+        if self.take_profit_pct > 0 and tp_price > 0:
+            reward = abs(tp_price - entry_price)
+            rr_ratio = reward / risk if risk > 0 else 0
+            if rr_ratio < 2.0:
+                return self._reject(f"Risk/Reward ratio insuficiente: {rr_ratio:.2f} (mínimo 2.0)")
+        else:
+            rr_ratio = 0.0
 
         logger.debug(
             "Riesgo validado: dir=%s price=%.2f qty=%.4f capital=%.2f SL=%.2f TP=%.2f RR=%.2f",
@@ -138,10 +140,10 @@ class RiskTool:
         """Calcula precios de Stop Loss y Take Profit."""
         if direction == "LONG":
             sl = entry_price * (1 - self.stop_loss_pct)
-            tp = entry_price * (1 + self.take_profit_pct)
+            tp = entry_price * (1 + self.take_profit_pct) if self.take_profit_pct > 0 else 0.0
         else:  # SHORT
             sl = entry_price * (1 + self.stop_loss_pct)
-            tp = entry_price * (1 - self.take_profit_pct)
+            tp = entry_price * (1 - self.take_profit_pct) if self.take_profit_pct > 0 else 0.0
         return sl, tp
 
     @staticmethod

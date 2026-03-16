@@ -422,7 +422,8 @@ class TradingAgent:
                 (pos.direction == "LONG"  and current_price <= pos.stop_loss) or
                 (pos.direction == "SHORT" and current_price >= pos.stop_loss)
             )
-            hit_tp = (
+            has_tp = pos.take_profit > 0
+            hit_tp = has_tp and (
                 (pos.direction == "LONG"  and current_price >= pos.take_profit) or
                 (pos.direction == "SHORT" and current_price <= pos.take_profit)
             )
@@ -476,8 +477,12 @@ class TradingAgent:
                 hit_sl = exit_price <= pos.stop_loss * 1.005  # pequeño margen de slippage
             else:
                 hit_sl = exit_price >= pos.stop_loss * 0.995
-            strategy = "SL_HIT" if hit_sl else "TP_HIT"
-            outcome = "❌ SL" if hit_sl else "✅ TP"
+            if pos.take_profit <= 0:
+                strategy = "MANUAL_EXIT"
+                outcome = "ℹ️ CIERRE"
+            else:
+                strategy = "SL_HIT" if hit_sl else "TP_HIT"
+                outcome = "❌ SL" if hit_sl else "✅ TP"
 
         # ── Registrar cierre en portafolio ────────────────────────────────────
         record = portfolio_tool.close_position(symbol, exit_price, strategy=strategy)

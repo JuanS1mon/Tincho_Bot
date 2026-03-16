@@ -48,11 +48,12 @@ class ExecutionTool:
             return None
 
         logger.info(
-            "[%s] Ejecutando %s en %s | qty=%.4f | capital=%.2f USDT | SL=%.4f | TP=%.4f",
+            "[%s] Ejecutando %s en %s | qty=%.4f | capital=%.2f USDT | SL=%.4f | TP=%s",
             "DRY-RUN" if dry_run else "REAL",
             direction, symbol,
             risk_params.quantity, risk_params.capital_to_use,
-            risk_params.stop_loss_price, risk_params.take_profit_price,
+            risk_params.stop_loss_price,
+            f"{risk_params.take_profit_price:.4f}" if risk_params.take_profit_price > 0 else "OFF",
         )
 
         if dry_run:
@@ -84,10 +85,12 @@ class ExecutionTool:
                 symbol, side, risk_params.stop_loss_price, risk_params.quantity
             )
 
-            # 4. Take Profit
-            tp_order = self._orders.set_take_profit(
-                symbol, side, risk_params.take_profit_price, risk_params.quantity
-            )
+            # 4. Take Profit (opcional)
+            tp_order = None
+            if risk_params.take_profit_price > 0:
+                tp_order = self._orders.set_take_profit(
+                    symbol, side, risk_params.take_profit_price, risk_params.quantity
+                )
 
             # 5. Trailing Stop
             trailing_order = self._orders.set_trailing_stop(
@@ -100,7 +103,7 @@ class ExecutionTool:
             return {
                 "main_order_id": order_id,
                 "sl_order_id": sl_order.get("orderId"),
-                "tp_order_id": tp_order.get("orderId"),
+                "tp_order_id": tp_order.get("orderId") if tp_order else None,
                 "trailing_order_id": trailing_order.get("orderId"),
                 "entry_price": entry_price,
                 "symbol": symbol,

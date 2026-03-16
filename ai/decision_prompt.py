@@ -69,13 +69,14 @@ Open positions per symbol:
     # ── Parámetros actuales del agente ────────────────────────────────────────
     if dynamic_params is not None:
         p = dynamic_params
+        tp_label = "OFF" if p.take_profit <= 0 else f"{p.take_profit:.1%}"
         params_block = f"""
 Current agent parameters (AI-adjustable):
 - leverage:                  {p.leverage}x         [allowed: 1–10]
 - max_capital_per_trade:     {p.max_capital_per_trade:.0%}     [allowed: 5%–50% of symbol allocation]
 - risk_per_trade:            {p.risk_per_trade:.3f}    [allowed: 0.005–0.03]
 - stop_loss:                 {p.stop_loss:.1%}      [allowed: 1%–5%]
-- take_profit:               {p.take_profit:.1%}      [allowed: 2%–15%]
+    - take_profit:               {tp_label}      [allowed: 0%–15% | 0% = disabled]
 - timeframe:                 {p.timeframe}         [allowed: 1m|3m|5m|15m|30m|1h|2h|4h]
 - analysis_interval_seconds: {p.analysis_interval_seconds}s       [allowed: 180–3600]
 - total_parameter_adjustments_by_AI: {p.adjustment_count}
@@ -188,9 +189,10 @@ def build_market_overview_prompt(
     # Bloque de parámetros actuales
     if dynamic_params is not None:
         p = dynamic_params
+        tp_label = "OFF" if p.take_profit <= 0 else f"{p.take_profit:.1%}"
         params_block = (
             f"Current parameters: leverage={p.leverage}x | "
-            f"sl={p.stop_loss:.1%} | tp={p.take_profit:.1%} | "
+            f"sl={p.stop_loss:.1%} | tp={tp_label} | "
             f"max_cap={p.max_capital_per_trade:.0%} | "
             f"risk={p.risk_per_trade:.1%} | tf={p.timeframe} | "
             f"adjustments_by_AI={p.adjustment_count} | last_reason={p.last_adjustment_reason or 'none'}"

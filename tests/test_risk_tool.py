@@ -99,3 +99,10 @@ class TestRiskTool:
         r = risk.validate("LONG", 50000.0, available_capital=24, total_capital=24)
         assert not r.is_valid
         assert "100" in r.rejection_reason  # mensaje menciona el mínimo
+
+    def test_take_profit_cero_desactiva_tp_y_mantiene_validacion(self, risk):
+        risk.take_profit_pct = 0.0
+        r = risk.validate("LONG", 100.0, available_capital=100, total_capital=100)
+        assert r.is_valid
+        assert r.take_profit_price == 0
+        assert r.stop_loss_price > 0
