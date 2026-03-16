@@ -788,7 +788,8 @@ export default function Dashboard() {
   const snapshots = market?.market_snapshots ?? {};
   const signals = market?.signals ?? {};
 
-  const isTrading = !!(port && port.open_positions > 0);
+  const positionCount = port ? Math.max(port.open_positions ?? 0, Object.keys(port.positions ?? {}).length) : 0;
+  const isTrading = positionCount > 0;
   const allNoSignal =
     !isTrading &&
     Object.keys(signals).length > 0 &&
@@ -1005,7 +1006,7 @@ export default function Dashboard() {
 
         {/* ── Alert zone ── */}
         {isTrading && port && (
-          <TradingAlert count={port.open_positions} positions={port.positions} />
+          <TradingAlert count={positionCount} positions={port.positions} />
         )}
         {allNoSignal && (
           <NoSignalAlert reasons={noSignalReasons} />
@@ -1015,12 +1016,12 @@ export default function Dashboard() {
         {port && (() => {
           const totalUnrealized = Object.values(port.positions).reduce((sum, pos) => sum + (pos.unrealized_pnl ?? 0), 0);
           const combinedPnl = port.total_pnl + totalUnrealized;
-          const hasOpenPositions = port.open_positions > 0;
+          const hasOpenPositions = positionCount > 0;
 
           // Win Rate en tiempo real: cerrados ganadores + abiertas en ganancia / total
           const openWinning = Object.values(port.positions).filter(pos => (pos.unrealized_pnl ?? 0) > 0).length;
           const liveWinning = port.winning_trades + openWinning;
-          const liveTotal = port.total_trades + port.open_positions;
+          const liveTotal = port.total_trades + positionCount;
           const liveWinRate = liveTotal > 0 ? liveWinning / liveTotal : 0;
 
           return (
@@ -1055,7 +1056,7 @@ export default function Dashboard() {
                     : `${port.winning_trades}/${port.total_trades} cerrados`
                 }
               />
-              <Stat label="Posiciones" value={port.open_positions} />
+              <Stat label="Posiciones" value={positionCount} />
               <Stat label="Total trades" value={port.total_trades} />
             </div>
           </Card>
@@ -1063,7 +1064,7 @@ export default function Dashboard() {
         })()}
 
         {/* Open Positions */}
-        {port && port.open_positions > 0 && (
+        {port && positionCount > 0 && (
           <Card title="Portfolio — Posiciones abiertas">
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
               {Object.entries(port.positions).map(([sym, pos]) => {
@@ -1266,7 +1267,7 @@ export default function Dashboard() {
             {port ? (
               <>
                 <div className="text-base font-semibold text-[var(--text)]">{port.available_capital.toFixed(2)} USDT</div>
-                <div className="text-xs mt-0.5">{port.open_positions} posición{port.open_positions !== 1 ? "es" : ""} abiertas</div>
+                <div className="text-xs mt-0.5">{positionCount} posición{positionCount !== 1 ? "es" : ""} abiertas</div>
               </>
             ) : (
               <span>Conectando...</span>
@@ -1332,7 +1333,7 @@ export default function Dashboard() {
       )}
       {showBombarda && (
         <BombardaConfirm
-          posCount={port?.open_positions ?? 0}
+          posCount={positionCount}
           onClose={() => setShowBombarda(false)}
           onConfirm={handleBombarda}
           loading={bombarding}
