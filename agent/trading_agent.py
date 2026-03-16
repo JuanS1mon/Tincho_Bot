@@ -47,6 +47,9 @@ class TradingAgent:
         # Tracking de tendencias/señales previas para detectar cambios
         self._prev_trends: Dict[str, str] = {}   # symbol → "BULLISH"|"BEARISH"|"NEUTRAL"
         self._prev_signals: Dict[str, str] = {}  # symbol → "LONG"|"SHORT"|"NO_SIGNAL"
+        self._prev_rsi: Dict[str, float] = {}
+        self._prev_funding: Dict[str, float] = {}
+        self._prev_price: Dict[str, float] = {}
 
         # Restaurar parámetros dinámicos desde MongoDB (ajustes previos de la IA)
         parameters_manager.load_from_db()
@@ -162,12 +165,10 @@ class TradingAgent:
                 error_logger.error("Error analizando %s: %s", symbol, exc)
 
         # ── Paso 5-7: Evaluar señales y ejecutar trades ────────────────────────
-        # ── Paso 4.5: Tincho1 analiza condiciones globales y ajusta parámetros ──
-        # Solo ejecutar si hay cambios relevantes en el mercado (ejemplo: cambio de tendencia, volumen, señales nuevas)
-        cambios_relevantes = any(
-            s.signal != "NO_SIGNAL" or abs(s.confidence) > 0.7 for s in signals.values()
-        )
-        if all_market_data and cambios_relevantes:
+        # ── Paso 4.5: Tincho1 sólo en ciclo 1 o ante cambio/anomalía real ─────
+        run_tincho, tincho_reason = self._should_run_tincho_overview(all_market_data, signals)
+        if all_market_data and run_tincho:
+            logger.info("🌍 Tincho1 activado: %s", tincho_reason)
             try:
                 decision_engine.market_overview_adjust(all_market_data, self.state)
             except Exception as exc:
@@ -246,6 +247,9 @@ class TradingAgent:
 
             except Exception as exc:
                 error_logger.error("Error evaluando señal para %s: %s", symbol, exc)
+
+        # Baseline para el próximo ciclo (detección de cambios/anomalías).
+        self._update_prev_market_state(all_market_data, signals)
 
         # ── Paso 8: Estado del portafolio ─────────────────────────────────────
         port = portfolio_tool.get_state_dict()
@@ -668,6 +672,57 @@ class TradingAgent:
         )
 
         return {"snap": snap, "indicators": ind, "signal": signal}
+
+    def _should_run_tincho_overview(self, all_market_data: Dict[str, dict], signals: Dict[str, TradingSignal]) -> tuple[bool, str]:
+        """
+        Activa Tincho1 únicamente cuando hay información nueva útil:
+          - primer ciclo,
+          - cambio de tendencia/señal,
+          - anomalías fuertes entre ciclos.
+        """
+        if self.state.cycle == 1:
+            return True, "ciclo 1"
+
+        for symbol, data in all_market_data.items():
+            trend_now = str(data.get("trend", ""))
+            signal_now = signals.get(symbol).signal if symbol in signals else "NO_SIGNAL"
+
+            prev_trend = self._prev_trends.get(symbol)
+            prev_signal = self._prev_signals.get(symbol)
+            if prev_trend is not None and trend_now != prev_trend:
+                return True, f"cambio tendencia {symbol}: {prev_trend}->{trend_now}"
+            if prev_signal is not None and signal_now != prev_signal:
+                return True, f"cambio señal {symbol}: {prev_signal}->{signal_now}"
+
+            # Anomalías inter-ciclo (saltos bruscos)
+            rsi_now = float(data.get("rsi", 0.0) or 0.0)
+            funding_now = float(data.get("funding_rate", 0.0) or 0.0)
+            price_now = float(data.get("price", 0.0) or 0.0)
+
+            prev_rsi = self._prev_rsi.get(symbol)
+            if prev_rsi is not None and abs(rsi_now - prev_rsi) >= 10.0:
+                return True, f"anomalía RSI {symbol}: Δ={rsi_now - prev_rsi:+.1f}"
+
+            prev_funding = self._prev_funding.get(symbol)
+            if prev_funding is not None and abs(funding_now - prev_funding) >= 0.01:
+                return True, f"anomalía funding {symbol}: Δ={funding_now - prev_funding:+.4f}%"
+
+            prev_price = self._prev_price.get(symbol)
+            if prev_price is not None and prev_price > 0 and price_now > 0:
+                jump = (price_now - prev_price) / prev_price
+                if abs(jump) >= 0.02:
+                    return True, f"anomalía precio {symbol}: Δ={jump*100:+.2f}%"
+
+        return False, "sin cambios relevantes"
+
+    def _update_prev_market_state(self, all_market_data: Dict[str, dict], signals: Dict[str, TradingSignal]) -> None:
+        """Guarda baseline para comparar el próximo ciclo."""
+        for symbol, data in all_market_data.items():
+            self._prev_trends[symbol] = str(data.get("trend", ""))
+            self._prev_signals[symbol] = signals.get(symbol).signal if symbol in signals else "NO_SIGNAL"
+            self._prev_rsi[symbol] = float(data.get("rsi", 0.0) or 0.0)
+            self._prev_funding[symbol] = float(data.get("funding_rate", 0.0) or 0.0)
+            self._prev_price[symbol] = float(data.get("price", 0.0) or 0.0)
 
     # ── Persistencia de estado ────────────────────────────────────────────────
 
