@@ -365,6 +365,12 @@ class TradingAgent:
                     order_id=str(exchange_pos.get("symbol", "")),
                 )
                 portfolio_tool.open_position(recovered)
+                self.state.add_recovered_position(
+                    symbol=symbol,
+                    direction=direction,
+                    entry_price=entry_price,
+                    quantity=quantity,
+                )
                 logger.warning(
                     "[%s] Posición recuperada tras reinicio | dir=%s | entry=%.6f | qty=%.6f | SL=%.6f | TP=%.6f",
                     symbol, direction, entry_price, quantity, stop_loss, take_profit,

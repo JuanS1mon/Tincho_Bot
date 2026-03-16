@@ -55,6 +55,15 @@ interface AgentStatus {
   last_cycle_time: number;
   last_error: string;
   symbols: string[];
+  recovered_positions?: RecoveredPosition[];
+}
+
+interface RecoveredPosition {
+  symbol: string;
+  direction: string;
+  entry_price: number;
+  quantity: number;
+  timestamp: number;
 }
 
 interface Trade {
@@ -181,6 +190,39 @@ function OfflineBanner() {
         <strong>Agente no detectado</strong>
         <div className="text-yellow-400/70 text-xs mt-0.5">
           Iniciá el bot con <code className="bg-yellow-900/30 px-1 rounded">python app/main.py --dry-run --interval 60</code> y recargá la página.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RecoveredPositionsBanner({ positions }: { positions: RecoveredPosition[] }) {
+  if (!positions.length) return null;
+
+  return (
+    <div className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 p-4 text-sm text-cyan-200">
+      <div className="flex items-start gap-3">
+        <span className="text-lg">↺</span>
+        <div className="min-w-0 flex-1">
+          <div className="font-semibold text-cyan-100">Posiciones recuperadas tras reinicio</div>
+          <div className="text-cyan-200/75 text-xs mt-0.5">
+            El bot volvió a cargar posiciones abiertas desde Binance y las está monitoreando otra vez.
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {positions.map((pos) => (
+              <div
+                key={`${pos.symbol}-${pos.timestamp}`}
+                className="rounded-lg border border-cyan-400/20 bg-black/20 px-3 py-2"
+              >
+                <div className="font-mono text-cyan-50 text-xs">
+                  {pos.symbol} · {pos.direction}
+                </div>
+                <div className="text-[11px] text-cyan-200/70 mt-0.5">
+                  entrada ${pos.entry_price.toLocaleString()} · qty {pos.quantity}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </div>
@@ -845,6 +887,9 @@ export default function Dashboard() {
       <main className="w-full px-4 sm:px-6 lg:px-10 xl:px-16 py-6 space-y-6 pb-28">
 
         {!online && <OfflineBanner />}
+        {!!agentStatus?.recovered_positions?.length && (
+          <RecoveredPositionsBanner positions={agentStatus.recovered_positions} />
+        )}
 
         {/* ── Marquitos Status + Posición activa ── */}
         {marquitosActive && (

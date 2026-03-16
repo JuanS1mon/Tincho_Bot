@@ -65,6 +65,16 @@ class AIDecisionState:
 
 
 @dataclass
+class RecoveredPositionState:
+    """Posición reconstruida desde Binance tras reinicio del proceso."""
+    symbol: str
+    direction: str
+    entry_price: float
+    quantity: float
+    timestamp: float = field(default_factory=time.time)
+
+
+@dataclass
 class AgentState:
     """Estado global del agente — expuesto por la API HTTP."""
     status: str = "IDLE"        # IDLE | ANALYZING | TRADING | ERROR | STOPPED
@@ -77,6 +87,7 @@ class AgentState:
     signals: Dict[str, SignalState] = field(default_factory=dict)
     last_simulation: Optional[SimulationState] = None
     last_ai_decision: Optional[AIDecisionState] = None
+    recovered_positions: List[RecoveredPositionState] = field(default_factory=list)
 
     # Historial de logs del ciclo actual (últimas N entradas)
     cycle_logs: List[str] = field(default_factory=list)
@@ -109,6 +120,26 @@ class AgentState:
         if len(self.cycle_logs) > max_logs:
             self.cycle_logs = self.cycle_logs[-max_logs:]
 
+    def add_recovered_position(
+        self,
+        symbol: str,
+        direction: str,
+        entry_price: float,
+        quantity: float,
+        max_items: int = 20,
+    ) -> None:
+        """Registra una posición recuperada para que el frontend la muestre."""
+        self.recovered_positions.append(
+            RecoveredPositionState(
+                symbol=symbol,
+                direction=direction,
+                entry_price=entry_price,
+                quantity=quantity,
+            )
+        )
+        if len(self.recovered_positions) > max_items:
+            self.recovered_positions = self.recovered_positions[-max_items:]
+
     def to_dict(self) -> Dict[str, Any]:
         """Serializa el estado a dict para la API HTTP."""
         return {
@@ -126,5 +157,6 @@ class AgentState:
             },
             "last_simulation": asdict(self.last_simulation) if self.last_simulation else None,
             "last_ai_decision": asdict(self.last_ai_decision) if self.last_ai_decision else None,
+            "recovered_positions": [asdict(pos) for pos in self.recovered_positions[-10:]],
             "recent_logs": self.cycle_logs[-20:],
         }
