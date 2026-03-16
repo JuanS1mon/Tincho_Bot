@@ -54,22 +54,15 @@ class TestPortfolioCapital:
         portfolio.open_position(pos)
         assert portfolio.available_capital == 800.0
 
-    def test_asignacion_por_simbolo_2_symbols(self, portfolio):
-        # Con 2 símbolos, cada uno tiene 500 USDT
-        from unittest.mock import patch
-        with patch("tools.portfolio_tool.settings") as mock_settings:
-            mock_settings.symbols = ["BTCUSDT", "ETHUSDT"]
-            alloc = portfolio.available_capital_for_symbol("BTCUSDT")
-            assert alloc == 500.0
+    def test_capital_por_simbolo_usa_capital_global_disponible(self, portfolio):
+        alloc = portfolio.available_capital_for_symbol("BTCUSDT")
+        assert alloc == 1000.0
 
-    def test_asignacion_por_simbolo_descuenta_posicion_abierta(self, portfolio):
-        from unittest.mock import patch
+    def test_capital_global_disponible_descuenta_posiciones_abiertas(self, portfolio):
         pos = _pos("BTCUSDT", capital=100.0)
         portfolio.open_position(pos)
-        with patch("tools.portfolio_tool.settings") as mock_settings:
-            mock_settings.symbols = ["BTCUSDT", "ETHUSDT"]
-            avail = portfolio.available_capital_for_symbol("BTCUSDT")
-            assert avail == 400.0  # 500 - 100
+        avail = portfolio.available_capital_for_symbol("ETHUSDT")
+        assert avail == 900.0
 
 
 class TestOpenClosePosition:

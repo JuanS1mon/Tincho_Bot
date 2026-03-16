@@ -44,9 +44,6 @@ def build_decision_prompt(
     _portfolio = portfolio or portfolio_tool
 
     # ── Portafolio y métricas de rendimiento ─────────────────────────────────
-    num_symbols = max(1, len(list(market_data.keys())) or 2)
-    symbol_alloc = _portfolio.capital / num_symbols
-
     # Lista explícita de posiciones abiertas por símbolo
     open_pos_lines = []
     for sym in market_data.keys():
@@ -59,7 +56,7 @@ def build_decision_prompt(
 
     portfolio_block = f"""Portfolio status:
 - total_capital:     {_portfolio.capital:.2f} USDT  (grows incrementally with profits)
-- per_symbol_alloc:  {symbol_alloc:.2f} USDT  (capital / {num_symbols} symbols, 50% each)
+- available_capital: {_portfolio.available_capital:.2f} USDT  (shared global capital for new trades)
 - open_positions:    {len(_portfolio.positions)}
 - total_pnl:         {_portfolio.total_pnl:.2f} USDT  ({_portfolio.total_pnl / _portfolio.initial_capital * 100:.1f}% desde inicio)
 - win_rate:          {_portfolio.win_rate:.2%}  ({_portfolio.winning_trades}/{_portfolio.total_trades} trades)
@@ -99,7 +96,7 @@ Current agent parameters (AI-adjustable):
   open_interest_trend: {data.get('oi_trend', 'UNKNOWN')}
   oi_signal:           {data.get('oi_signal', 'NEUTRAL')}
   funding_rate:        {data.get('funding_rate', 0):.4f}
-  available_capital:   {sym_avail:.2f} USDT  (from {symbol_alloc:.2f} allocation)"""
+    available_capital:   {sym_avail:.2f} USDT  (shared capital still free)"""
         market_blocks.append(block)
 
     market_section = "\n".join(market_blocks)

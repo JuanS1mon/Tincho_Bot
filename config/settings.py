@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     # ── Trading ───────────────────────────────────────────────────────────────
     initial_capital: float = 100.0
     # SYMBOLS se guarda como str CSV y se expone como List[str] via property
-    symbols_csv: str = "BTCUSDT,ETHUSDT"
+    symbols_csv: str = "BTCUSDT,ETHUSDT,XAUUSDT,XAGUSDT"
     leverage: int = 8
     max_capital_per_trade: float = 0.50
     risk_per_trade: float = 0.015

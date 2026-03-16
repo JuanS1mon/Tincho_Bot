@@ -138,22 +138,18 @@ class PortfolioTool:
         """
         Capital disponible para un símbolo específico.
 
-        El capital total se divide equitativamente entre todos los símbolos
-        configurados (50%/50% con 2 símbolos). Cada símbolo opera solo con
-        su porción, permitiendo crecimiento incremental independiente.
+        Política actual: el capital es global y compartido. El bot decide cuánto
+        asignar a cada operación usando el capital total disponible, no una cuota
+        fija por símbolo.
 
-        Ejemplo: capital=200 USDT, 2 símbolos → 100 USDT por símbolo.
-        Si BTC ya tiene comprometidos 30 USDT → BTC disponible = 70 USDT.
+        Mientras no exista una restricción adicional por símbolo, devolvemos el
+        capital total libre del portafolio.
         """
-        num_symbols = max(1, len(settings.symbols))
-        symbol_allocation = self.capital / num_symbols
-        committed = self.positions[symbol].capital_used if symbol in self.positions else 0.0
-        return max(0.0, symbol_allocation - committed)
+        return self.available_capital
 
     def symbol_allocation(self, symbol: str) -> float:
-        """Capital total asignado al símbolo (sin descontar posiciones abiertas)."""
-        num_symbols = max(1, len(settings.symbols))
-        return self.capital / num_symbols
+        """Capital total elegible para una nueva posición en ese símbolo."""
+        return self.capital
 
     @property
     def total_equity(self) -> float:

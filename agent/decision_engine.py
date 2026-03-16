@@ -178,9 +178,9 @@ class DecisionEngine:
         # Sincronizar RiskTool con los parámetros dinámicos actuales
         risk_tool.sync_params(parameters_manager.params)
 
-        # Capital asignado a este símbolo (50% / 50% del total)
-        symbol_allocation = portfolio_tool.symbol_allocation(symbol)
-        symbol_available = portfolio_tool.available_capital_for_symbol(symbol)
+        # Capital global compartido: la IA decide cuánto usar del total disponible.
+        symbol_allocation = portfolio_tool.capital
+        symbol_available = portfolio_tool.available_capital
 
         current_price = indicators.price
         risk_params: RiskParams = risk_tool.validate(
@@ -296,8 +296,8 @@ class DecisionEngine:
             risk_params = risk_tool.validate(
                 direction=final_direction,
                 entry_price=current_price,
-                available_capital=portfolio_tool.available_capital_for_symbol(symbol),
-                total_capital=portfolio_tool.symbol_allocation(symbol),
+                available_capital=portfolio_tool.available_capital,
+                total_capital=portfolio_tool.capital,
                 capital_usage=ai_decision.capital_usage,
             )
             if not risk_params.is_valid:

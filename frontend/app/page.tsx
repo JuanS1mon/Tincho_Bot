@@ -789,6 +789,7 @@ export default function Dashboard() {
   const signals = market?.signals ?? {};
 
   const positionCount = port ? Math.max(port.open_positions ?? 0, Object.keys(port.positions ?? {}).length) : 0;
+  const maxTrackedPositions = Math.max(agentStatus?.symbols?.length ?? 0, params?.symbols_csv?.split?.(",")?.filter?.((s: string) => s.trim()).length ?? 0, 2);
   const isTrading = positionCount > 0;
   const currentMode = (() => {
     if (!params) return "-";
@@ -890,7 +891,7 @@ export default function Dashboard() {
               MODO: {currentMode}
             </span>
             <span className="inline-flex items-center px-2 py-0.5 rounded border border-orange-500/25 text-[11px] font-bold mr-2">
-              POSICIONES: {positionCount}/2
+              POSICIONES: {positionCount}/{maxTrackedPositions}
             </span>
             <b>Parámetros actuales:</b> &nbsp;
             leverage: <span className="font-bold">{params.leverage}x</span> &nbsp;|

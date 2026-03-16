@@ -97,9 +97,11 @@ Timeframe por defecto: 15m
 
 ## 📊 Símbolos
 
-BTCUSDT, ETHUSDT
+BTCUSDT, ETHUSDT, XAUUSDT, XAGUSDT
 
-Distribución de capital: equitativa (capital_total / num_simbolos por símbolo)
+Distribución de capital: dinámica sobre el capital total disponible.
+La IA y el algoritmo deciden en cuál activo entrar y qué fracción del capital usar,
+sin cupo fijo por símbolo.
 
 ---
 
@@ -107,7 +109,7 @@ Distribución de capital: equitativa (capital_total / num_simbolos por símbolo)
 
 Estas reglas son implementadas en código y NO pueden ser cambiadas por la IA, solo por el operador modificando este archivo:
 
-- **Capital mínimo para operar**: 10 USDT por símbolo
+- **Capital mínimo para operar**: 10 USDT disponibles para la operación
 - **Risk/Reward mínimo**: 1:2 (el TP debe ser al menos el doble que el SL en distancia de precio)
 - **Máximo de posiciones simultáneas por símbolo**: 1 (no se abre una nueva posición si ya hay una abierta)
 - **Stop Loss mínimo**: 1% del precio de entrada
