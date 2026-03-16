@@ -473,17 +473,53 @@ class TradingAgent:
 
     def _check_position_closed(self, symbol: str, pos) -> None:
         """Evalúa si una posición fue cerrada y registra el cierre."""
-        import time as _time
+        # Primero evaluamos lock de ganancia por retroceso desde el pico.
+        # Aplica en dry-run y live, y cierra de forma activa si se dispara.
+        current_price: float | None = None
+        try:
+            ticker = order_manager._client.safe_call(
+                order_manager._client.client.futures_symbol_ticker,
+                symbol=symbol,
+            )
+            current_price = float(ticker["price"])
+        except Exception:
+            current_price = None
+
+        if current_price is not None:
+            lock_hit, pnl_now, peak_pnl, floor_pnl = portfolio_tool.profit_lock_state(symbol, current_price)
+            if lock_hit:
+                strategy = f"PROFIT_LOCK_RETRACE_{int(portfolio_tool.PROFIT_LOCK_RETRACE_PCT * 100)}"
+                outcome = "🔒 PROFIT LOCK"
+
+                if not self.dry_run:
+                    try:
+                        side = "BUY" if pos.direction == "LONG" else "SELL"
+                        order_manager.close_position(symbol, side, pos.quantity)
+                        try:
+                            order_manager._client.safe_call(
+                                order_manager._client.client.futures_cancel_all_open_orders,
+                                symbol=symbol,
+                            )
+                        except Exception:
+                            pass
+                    except Exception as exc:
+                        error_logger.error("[%s] Error cerrando por profit lock: %s", symbol, exc)
+                        return
+
+                logger.info(
+                    "[%s] %s | pnl_actual=%+.4f | pico=%+.4f | piso(85%%)=%+.4f",
+                    symbol,
+                    outcome,
+                    pnl_now,
+                    peak_pnl,
+                    floor_pnl,
+                )
+                self._finalize_closed_position(symbol, current_price, strategy, outcome)
+                return
 
         if self.dry_run:
             # ── Dry-run: simular SL/TP con precio actual ──────────────────────
-            try:
-                ticker = order_manager._client.safe_call(
-                    order_manager._client.client.futures_symbol_ticker,
-                    symbol=symbol,
-                )
-                current_price = float(ticker["price"])
-            except Exception:
+            if current_price is None:
                 return  # sin precio, no podemos evaluar
 
             hit_sl = (
@@ -552,7 +588,10 @@ class TradingAgent:
                 strategy = "SL_HIT" if hit_sl else "TP_HIT"
                 outcome = "❌ SL" if hit_sl else "✅ TP"
 
-        # ── Registrar cierre en portafolio ────────────────────────────────────
+        self._finalize_closed_position(symbol, exit_price, strategy, outcome)
+
+    def _finalize_closed_position(self, symbol: str, exit_price: float, strategy: str, outcome: str) -> None:
+        """Registra, loguea y persiste el cierre de una posición."""
         record = portfolio_tool.close_position(symbol, exit_price, strategy=strategy)
         if record is None:
             return

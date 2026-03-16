@@ -650,9 +650,9 @@ def _build_market_context() -> str:
             if float(pos.get("stop_loss", 0) or 0) <= 0:
                 lines.append("    ⚠️ ALERTA: posición sin Stop Loss activo")
 
-    # Mercado y señales (BTC/ETH del agente)
+    # Mercado y señales (todos los símbolos monitoreados por el agente)
     if _agent is not None and _agent.state.market_snapshots:
-        lines.append("\n=== MERCADO (BTC / ETH) ===")
+        lines.append("\n=== MERCADO (símbolos monitoreados) ===")
         for sym, snap in _agent.state.market_snapshots.items():
             sig = _agent.state.signals.get(sym)
             signal_str = f"{sig.signal} (conf {sig.confidence:.0%}, est. {sig.strategy})" if sig else "?"

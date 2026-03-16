@@ -28,6 +28,8 @@ class Position:
     take_profit: float
     entry_time: float = field(default_factory=time.time)
     order_id: Optional[str] = None
+    peak_unrealized_pnl: float = 0.0
+    peak_unrealized_pnl_pct: float = 0.0
 
     def unrealized_pnl(self, current_price: float) -> float:
         """PnL no realizado basado en el precio actual."""
@@ -63,6 +65,9 @@ class PortfolioTool:
     # Piso mínimo: permite hasta este % de drawdown antes de tener ganancias.
     # Evita que el CB se dispare en la primera micro-pérdida del día.
     CIRCUIT_BREAKER_FLOOR = 0.05
+    # Si una operación llegó a un pico de ganancia, se cierra cuando retrocede
+    # más de este porcentaje desde ese pico (profit lock dinámico por posición).
+    PROFIT_LOCK_RETRACE_PCT = 0.15
 
     def __init__(self) -> None:
         self.capital: float = settings.initial_capital
@@ -164,16 +169,67 @@ class PortfolioTool:
     def total_pnl(self) -> float:
         return self.capital - self.initial_capital
 
+    @property
+    def closed_trades_pnl(self) -> float:
+        """PnL realizado total de todos los trades cerrados."""
+        return sum(t.pnl for t in self.trade_history)
+
+    @property
+    def closed_trades_pnl_pct(self) -> float:
+        """PnL realizado como porcentaje del capital inicial."""
+        if self.initial_capital <= 0:
+            return 0.0
+        return (self.closed_trades_pnl / self.initial_capital) * 100
+
     # ── Posiciones ────────────────────────────────────────────────────────────
 
     def open_position(self, position: Position) -> None:
         """Registra una nueva posición abierta."""
+        position.peak_unrealized_pnl = 0.0
+        position.peak_unrealized_pnl_pct = 0.0
         self.positions[position.symbol] = position
         logger.info(
             "Posición abierta: %s %s @ %.4f | qty=%.4f | capital=%.2f USDT",
             position.direction, position.symbol,
             position.entry_price, position.quantity, position.capital_used,
         )
+
+    def update_position_peak(self, symbol: str, current_price: float) -> None:
+        """Actualiza el pico de PnL no realizado para una posición abierta."""
+        pos = self.positions.get(symbol)
+        if pos is None:
+            return
+
+        pnl_now = pos.unrealized_pnl(current_price)
+        if pnl_now > pos.peak_unrealized_pnl:
+            pos.peak_unrealized_pnl = pnl_now
+
+        if pos.capital_used > 0:
+            pnl_pct_now = pnl_now / pos.capital_used
+            if pnl_pct_now > pos.peak_unrealized_pnl_pct:
+                pos.peak_unrealized_pnl_pct = pnl_pct_now
+
+    def profit_lock_state(self, symbol: str, current_price: float) -> tuple[bool, float, float, float]:
+        """
+        Evalúa si debe cerrarse por retroceso desde el pico de ganancia.
+
+        Retorna:
+          (triggered, pnl_actual, peak_pnl, piso_permitido)
+        """
+        pos = self.positions.get(symbol)
+        if pos is None:
+            return False, 0.0, 0.0, 0.0
+
+        self.update_position_peak(symbol, current_price)
+
+        pnl_now = pos.unrealized_pnl(current_price)
+        peak_pnl = pos.peak_unrealized_pnl
+        if peak_pnl <= 0:
+            return False, pnl_now, peak_pnl, 0.0
+
+        floor_pnl = peak_pnl * (1.0 - self.PROFIT_LOCK_RETRACE_PCT)
+        triggered = pnl_now <= floor_pnl
+        return triggered, pnl_now, peak_pnl, floor_pnl
 
     def close_position(self, symbol: str, exit_price: float, strategy: str = "") -> Optional[TradeRecord]:
         """Cierra una posición y registra el resultado."""
@@ -280,6 +336,8 @@ class PortfolioTool:
             "available_capital": round(self.available_capital, 4),
             "initial_capital": self.initial_capital,
             "total_pnl": round(self.total_pnl, 4),
+            "closed_trades_pnl": round(self.closed_trades_pnl, 4),
+            "closed_trades_pnl_pct": round(self.closed_trades_pnl_pct, 2),
             "total_trades": self.total_trades,
             "winning_trades": self.winning_trades,
             "win_rate": round(self.win_rate, 4),
@@ -292,6 +350,8 @@ class PortfolioTool:
                     "capital_used": p.capital_used,
                     "stop_loss": p.stop_loss,
                     "take_profit": p.take_profit,
+                    "peak_unrealized_pnl": round(p.peak_unrealized_pnl, 4),
+                    "peak_unrealized_pnl_pct": round(p.peak_unrealized_pnl_pct, 4),
                 }
                 for sym, p in self.positions.items()
             },

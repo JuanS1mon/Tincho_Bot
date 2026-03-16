@@ -153,3 +153,44 @@ class TestGetStateDict:
         assert state["capital"] == 1000.0
         assert state["initial_capital"] == 1000.0
         assert state["total_pnl"] == 0.0
+
+
+class TestProfitLock:
+
+    def test_profit_lock_no_dispara_sin_pico_positivo(self, portfolio):
+        pos = _pos("BTCUSDT", "LONG", 100.0, 1.0, 100.0)
+        portfolio.open_position(pos)
+        # Precio por debajo de entrada: no hay pico de ganancia
+        hit, pnl_now, peak_pnl, floor_pnl = portfolio.profit_lock_state("BTCUSDT", 99.0)
+        assert hit is False
+        assert pnl_now < 0
+        assert peak_pnl == 0.0
+        assert floor_pnl == 0.0
+
+    def test_profit_lock_dispara_si_retrocede_mas_de_15_del_pico(self, portfolio):
+        pos = _pos("BTCUSDT", "LONG", 100.0, 1.0, 100.0)
+        portfolio.open_position(pos)
+
+        # Pico de +10 USDT
+        portfolio.profit_lock_state("BTCUSDT", 110.0)
+
+        # Piso permitido = 8.5 USDT (retroceso del 15% del pico)
+        hit, pnl_now, peak_pnl, floor_pnl = portfolio.profit_lock_state("BTCUSDT", 108.0)
+        assert hit is True
+        assert peak_pnl == pytest.approx(10.0, abs=1e-6)
+        assert floor_pnl == pytest.approx(8.5, abs=1e-6)
+        assert pnl_now == pytest.approx(8.0, abs=1e-6)
+
+    def test_profit_lock_no_dispara_si_retroceso_esta_dentro_del_15(self, portfolio):
+        pos = _pos("BTCUSDT", "LONG", 100.0, 1.0, 100.0)
+        portfolio.open_position(pos)
+
+        # Pico +10 USDT
+        portfolio.profit_lock_state("BTCUSDT", 110.0)
+
+        # +9 USDT sigue encima del piso (+8.5)
+        hit, pnl_now, peak_pnl, floor_pnl = portfolio.profit_lock_state("BTCUSDT", 109.0)
+        assert hit is False
+        assert peak_pnl == pytest.approx(10.0, abs=1e-6)
+        assert floor_pnl == pytest.approx(8.5, abs=1e-6)
+        assert pnl_now == pytest.approx(9.0, abs=1e-6)

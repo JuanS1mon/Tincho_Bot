@@ -1138,6 +1138,11 @@ export default function Dashboard() {
                 }
                 sub={`${port.winning_trades}/${port.total_trades} trades cerrados`}
               />
+              <Stat
+                label="PnL Cierre"
+                value={<PnlValue value={port.closed_trades_pnl ?? 0} />}
+                sub={`${port.closed_trades_pnl_pct >= 0 ? "+" : ""}${(port.closed_trades_pnl_pct ?? 0).toFixed(2)}% sobre capital inicial`}
+              />
               <Stat label="Posiciones" value={positionCount} />
               <Stat label="Total trades" value={port.total_trades} />
             </div>
