@@ -790,6 +790,20 @@ export default function Dashboard() {
 
   const positionCount = port ? Math.max(port.open_positions ?? 0, Object.keys(port.positions ?? {}).length) : 0;
   const isTrading = positionCount > 0;
+  const currentMode = (() => {
+    if (!params) return "-";
+    if (params.tryhard_mode || Number(params.leverage) >= 15) return "TRYHARD";
+    if (Number(params.leverage) <= 5 && Number(params.max_capital_per_trade) <= 0.15 && Number(params.risk_per_trade) <= 0.005) {
+      return "PUTITA";
+    }
+    return "CHILL";
+  })();
+  const modeClass =
+    currentMode === "TRYHARD"
+      ? "text-red-300 border-red-500/30 bg-red-900/20"
+      : currentMode === "PUTITA"
+        ? "text-cyan-300 border-cyan-500/30 bg-cyan-900/20"
+        : "text-green-300 border-green-500/30 bg-green-900/20";
   const allNoSignal =
     !isTrading &&
     Object.keys(signals).length > 0 &&
@@ -872,11 +886,17 @@ export default function Dashboard() {
       {params && (
         <div className="w-full px-4 sm:px-6 lg:px-10 xl:px-16 pt-3 pb-1">
           <div className="text-xs text-orange-300 font-mono bg-orange-900/10 border border-orange-500/20 rounded-lg px-4 py-2 mb-2">
+            <span className={`inline-flex items-center px-2 py-0.5 rounded border text-[11px] font-bold mr-2 ${modeClass}`}>
+              MODO: {currentMode}
+            </span>
+            <span className="inline-flex items-center px-2 py-0.5 rounded border border-orange-500/25 text-[11px] font-bold mr-2">
+              POSICIONES: {positionCount}/2
+            </span>
             <b>Parámetros actuales:</b> &nbsp;
             leverage: <span className="font-bold">{params.leverage}x</span> &nbsp;|
             max_capital: <span className="font-bold">{(params.max_capital_per_trade * 100).toFixed(1)}%</span> &nbsp;|
             stop_loss: <span className="font-bold">{(params.stop_loss * 100).toFixed(2)}%</span> &nbsp;|
-            take_profit: <span className="font-bold">{(params.take_profit * 100).toFixed(2)}%</span> &nbsp;|
+            take_profit: <span className="font-bold">{params.take_profit > 0 ? `${(params.take_profit * 100).toFixed(2)}%` : "OFF"}</span> &nbsp;|
             riesgo: <span className="font-bold">{(params.risk_per_trade * 100).toFixed(2)}%</span> &nbsp;|
             timeframe: <span className="font-bold">{params.timeframe}</span> &nbsp;|
             intervalo: <span className="font-bold">{params.analysis_interval_seconds}s</span>
