@@ -6,7 +6,7 @@ Almacena el registro completo de cada trade ejecutado.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from storage.database import db_manager
@@ -29,8 +29,8 @@ class TradeRepository:
         """
         doc = {
             **trade_data,
-            "timestamp": datetime.utcnow(),
-            "created_at": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc),
+            "created_at": datetime.now(timezone.utc).isoformat(),
         }
         try:
             result = self._col.insert_one(doc)
@@ -44,7 +44,7 @@ class TradeRepository:
         """Guarda el log completo de un ciclo del agente (análisis + decisión)."""
         doc = {
             **log_data,
-            "timestamp": datetime.utcnow(),
+            "timestamp": datetime.now(timezone.utc),
         }
         try:
             result = db_manager.db["execution_logs"].insert_one(doc)

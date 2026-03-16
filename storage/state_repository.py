@@ -6,7 +6,7 @@ Permite que el agente recupere su último estado si se reinicia.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from storage.database import db_manager
@@ -27,8 +27,8 @@ class StateRepository:
         """
         doc = {
             **state,
-            "timestamp": datetime.utcnow(),
-            "updated_at": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         try:
             result = self._col.replace_one(
@@ -59,7 +59,7 @@ class StateRepository:
         try:
             db_manager.db["market_snapshots"].insert_one({
                 **snapshot,
-                "timestamp": datetime.utcnow(),
+                "timestamp": datetime.now(timezone.utc),
             })
         except Exception as exc:
             error_logger.error("StateRepository.save_market_snapshot error: %s", exc)
@@ -83,7 +83,7 @@ class StateRepository:
     def save_parameters(self, params: Dict[str, Any]) -> None:
         """Persiste los parámetros dinámicos del agente (upsert)."""
         try:
-            doc = {"_id": "dynamic_parameters", **params, "updated_at": datetime.utcnow().isoformat()}
+            doc = {"_id": "dynamic_parameters", **params, "updated_at": datetime.now(timezone.utc).isoformat()}
             db_manager.db["agent_states"].replace_one(
                 {"_id": "dynamic_parameters"},
                 doc,

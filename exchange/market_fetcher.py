@@ -11,7 +11,7 @@ Obtiene datos de mercado desde la API de Binance Futures:
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
@@ -89,7 +89,7 @@ class MarketFetcher:
                 "price_change_pct": float(data["priceChangePercent"]),
                 "high_24h": float(data["highPrice"]),
                 "low_24h": float(data["lowPrice"]),
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             }
         except Exception as exc:
             error_logger.error("get_ticker(%s) error: %s", symbol, exc)
@@ -124,7 +124,7 @@ class MarketFetcher:
             return {
                 "symbol": symbol,
                 "open_interest": float(data["openInterest"]),
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             }
         except Exception as exc:
             error_logger.error("get_open_interest(%s) error: %s", symbol, exc)
