@@ -10,7 +10,7 @@ Simula la estrategia de pullback/breakout para obtener:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional
 
 import pandas as pd
 import numpy as np
@@ -38,13 +38,21 @@ class Backtester:
         self.sl_pct = settings.stop_loss
         self.tp_pct = settings.take_profit
 
-    def run(self, df: pd.DataFrame, direction: str = "LONG") -> BacktestResult:
+    def run(
+        self,
+        df: pd.DataFrame,
+        direction: str = "LONG",
+        sl_pct: Optional[float] = None,
+        tp_pct: Optional[float] = None,
+    ) -> BacktestResult:
         """
         Simula entradas en cada vela y evalúa si alcanzó TP o SL primero.
-        
-        Estrategia simplificada: entra al cierre de cada vela,
-        evalúa TP y SL en la siguiente vela (high/low del siguiente período).
+
+        sl_pct/tp_pct permiten usar los parámetros dinámicos actuales
+        en lugar de los valores estáticos del .env.
         """
+        _sl = sl_pct if sl_pct is not None else self.sl_pct
+        _tp = tp_pct if tp_pct is not None else self.tp_pct
         if len(df) < 30:
             return BacktestResult(0, 0, 0, 0, 0, 0, 0, 0)
 
@@ -55,28 +63,28 @@ class Backtester:
             entry = df["close"].iloc[i]
 
             if direction == "LONG":
-                sl = entry * (1 - self.sl_pct)
-                tp = entry * (1 + self.tp_pct)
+                sl = entry * (1 - _sl)
+                tp = entry * (1 + _tp)
                 next_low = df["low"].iloc[i + 1]
                 next_high = df["high"].iloc[i + 1]
 
                 if next_low <= sl:
-                    pnl_pct = -self.sl_pct
+                    pnl_pct = -_sl
                 elif next_high >= tp:
-                    pnl_pct = self.tp_pct
+                    pnl_pct = _tp
                 else:
                     # Cierre al precio de cierre de la siguiente vela
                     pnl_pct = (df["close"].iloc[i + 1] - entry) / entry
             else:  # SHORT
-                sl = entry * (1 + self.sl_pct)
-                tp = entry * (1 - self.tp_pct)
+                sl = entry * (1 + _sl)
+                tp = entry * (1 - _tp)
                 next_high = df["high"].iloc[i + 1]
                 next_low = df["low"].iloc[i + 1]
 
                 if next_high >= sl:
-                    pnl_pct = -self.sl_pct
+                    pnl_pct = -_sl
                 elif next_low <= tp:
-                    pnl_pct = self.tp_pct
+                    pnl_pct = _tp
                 else:
                     pnl_pct = (entry - df["close"].iloc[i + 1]) / entry
 

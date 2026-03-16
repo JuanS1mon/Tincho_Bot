@@ -65,7 +65,28 @@ class DecisionEngine:
             logger.info(reason)
             state.add_log(reason)
             return False, reason
+        # ── 0.1 Circuit breaker de sesión ───────────────────────────────────────────────
+        if portfolio_tool.circuit_breaker_active:
+            reason = (
+                f"🚨 Circuit breaker activo: drawdown de sesión "
+                f"{portfolio_tool.session_drawdown_pct:.1%} ≥ "
+                f"{portfolio_tool.CIRCUIT_BREAKER_THRESHOLD:.0%}. "
+                "Trading pausado hasta próxima sesión."
+            )
+            logger.warning("[%s] %s", symbol, reason)
+            state.add_log(reason)
+            return False, reason
 
+        # ── 0.2 Racha de pérdidas consecutivas ─────────────────────────────────────────
+        streak = portfolio_tool.consecutive_losses
+        if streak >= portfolio_tool.MAX_CONSECUTIVE_LOSSES:
+            reason = (
+                f"⚠️ {streak} pérdidas consecutivas — enfriamiento activado: "
+                "saltando ciclo para evitar overtrading."
+            )
+            logger.warning("[%s] %s", symbol, reason)
+            state.add_log(reason)
+            return False, reason
         direction = signal.signal  # LONG | SHORT
 
         # ── 1. Simulación ─────────────────────────────────────────────────────
@@ -88,7 +109,9 @@ class DecisionEngine:
             return False, reason
 
         # ── 2. Hard rules algorítmicas (nunca delegar a la IA) ────────────────────
-        blocked, block_reason = self._check_hard_rules(symbol, direction, indicators, sim)
+        blocked, block_reason = self._check_hard_rules(
+            symbol, direction, indicators, sim, funding_rate
+        )
         if blocked:
             logger.info("[%s] Hard rule bloqueada: %s", symbol, block_reason)
             state.add_log(f"Hard rule: {block_reason}")
@@ -135,7 +158,14 @@ class DecisionEngine:
             f"[IA] {decision_word} conf={ai_decision.confidence:.0%} | {ai_decision.reasoning}"
         )
 
-        # La decisión de trade la toma el código (hard rules ya validadas arriba).
+        # Bloquear si la confianza de la IA es demasiado baja (< 30%)
+        if ai_decision.confidence < 0.30:
+            reason = (
+                f"Confianza IA insuficiente: {ai_decision.confidence:.0%} (mín 30%) — no operar"
+            )
+            logger.info("[%s] %s", symbol, reason)
+            state.add_log(reason)
+            return False, reason
         # La IA solo aporta parameter_adjustments y razonamiento.
         if ai_decision.parameter_adjustments:
             parameters_manager.apply_adjustments(
@@ -292,6 +322,7 @@ class DecisionEngine:
         direction: str,
         indicators: "Indicators",
         sim: "SimulationResult",
+        funding_rate: float = 0.0,
     ) -> "Tuple[bool, str]":
         """
         Valida las hard rules numéricas sin depender de la IA.
@@ -318,6 +349,20 @@ class DecisionEngine:
             return True, f"SMA20={indicators.sma20:.2f} < SMA50={indicators.sma50:.2f} — tendencia BEARISH, no LONG"
         if direction == "SHORT" and indicators.sma20 > indicators.sma50:
             return True, f"SMA20={indicators.sma20:.2f} > SMA50={indicators.sma50:.2f} — tendencia BULLISH, no SHORT"
+
+        # 6. Funding rate extremo: evita pagar caro por mantener la posición
+        FUNDING_LONG_BLOCK  = 0.05   # 0.05 % por funding period → mercado muy apalancado alcista
+        FUNDING_SHORT_BLOCK = -0.05  # -0.05 % → mercado muy apalancado bajista
+        if direction == "LONG" and funding_rate > FUNDING_LONG_BLOCK:
+            return True, (
+                f"Funding rate {funding_rate:.4f}% > {FUNDING_LONG_BLOCK}% — "
+                "mercado sobre-apalancado alcista, evitar LONG"
+            )
+        if direction == "SHORT" and funding_rate < FUNDING_SHORT_BLOCK:
+            return True, (
+                f"Funding rate {funding_rate:.4f}% < {FUNDING_SHORT_BLOCK}% — "
+                "mercado sobre-apalancado bajista, evitar SHORT"
+            )
 
         return False, ""
 

@@ -54,6 +54,11 @@ class TradeRecord:
 class PortfolioTool:
     """Seguimiento en tiempo real del portafolio y posiciones."""
 
+    # Drawdown de sesión que dispara el circuit breaker (-15% por defecto).
+    CIRCUIT_BREAKER_THRESHOLD = -0.15
+    # Número de pérdidas consecutivas que activa el enfriamiento.
+    MAX_CONSECUTIVE_LOSSES = 3
+
     def __init__(self) -> None:
         self.capital: float = settings.initial_capital
         self.initial_capital: float = settings.initial_capital
@@ -61,6 +66,10 @@ class PortfolioTool:
         self.trade_history: List[TradeRecord] = []
         self.total_trades: int = 0
         self.winning_trades: int = 0
+        # Protecciones anti-pérdida
+        self._session_started: bool = False
+        self.session_start_capital: float = 0.0   # snapshot al primer sync real
+        self.consecutive_losses: int = 0          # reinicia en cada trade ganador
 
     def sync_from_exchange(self, force: bool = False) -> None:
         """
@@ -83,6 +92,11 @@ class PortfolioTool:
             else:
                 self.capital = real_balance
                 self.initial_capital = real_balance
+                # Primer sync real: tomar snapshot de capital de sesión.
+                if not self._session_started and real_balance > 0:
+                    self.session_start_capital = real_balance
+                    self._session_started = True
+                    logger.info("Session capital snapshot: %.4f USDT", real_balance)
                 logger.info(
                     "Capital sincronizado desde Binance Futures: %.4f USDT", real_balance,
                 )
@@ -167,6 +181,9 @@ class PortfolioTool:
         self.total_trades += 1
         if pnl > 0:
             self.winning_trades += 1
+            self.consecutive_losses = 0
+        else:
+            self.consecutive_losses += 1
 
         record = TradeRecord(
             symbol=symbol,
@@ -186,6 +203,18 @@ class PortfolioTool:
             position.direction, symbol, pnl, pnl_pct, self.capital,
         )
         return record
+
+    @property
+    def session_drawdown_pct(self) -> float:
+        """Drawdown desde el inicio de sesión (negativo = pérdida)."""
+        if self.session_start_capital <= 0:
+            return 0.0
+        return (self.capital - self.session_start_capital) / self.session_start_capital
+
+    @property
+    def circuit_breaker_active(self) -> bool:
+        """True si el drawdown de sesión supera el umbral máximo."""
+        return self.session_drawdown_pct <= self.CIRCUIT_BREAKER_THRESHOLD
 
     def has_open_position(self, symbol: str) -> bool:
         return symbol in self.positions

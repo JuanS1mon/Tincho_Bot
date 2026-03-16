@@ -7,6 +7,7 @@ para que el DecisionEngine lo consuma antes de consultar a la IA.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional
 
 import pandas as pd
 
@@ -41,14 +42,18 @@ class SimulationTool:
         df: pd.DataFrame,
         direction: str,
         capital: float,
+        sl_pct: Optional[float] = None,
+        tp_pct: Optional[float] = None,
     ) -> SimulationResult:
         """
         Ejecuta ambas simulaciones sobre el DataFrame OHLCV.
-        
+
+        sl_pct/tp_pct: parámetros dinámicos actuales; si no se pasan
+        usa los values del .env via settings.
         Retorna SimulationResult con recomendación PROCEED / SKIP.
         """
         try:
-            bt: BacktestResult = backtester.run(df, direction)
+            bt: BacktestResult = backtester.run(df, direction, sl_pct=sl_pct, tp_pct=tp_pct)
             mc: MonteCarloResult = monte_carlo.run(
                 winrate=bt.winrate,
                 avg_profit_pct=bt.avg_profit_pct,
