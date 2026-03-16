@@ -28,7 +28,7 @@ from agent.decision_engine import decision_engine
 from agent.state_manager import AgentState, MarketSnapshot as MarketSnapshotState, SignalState
 from agent.parameters_manager import parameters_manager
 from storage.state_repository import state_repository
-from tools.portfolio_tool import portfolio_tool
+from tools.portfolio_tool import portfolio_tool, Position
 from exchange.order_manager import order_manager
 from storage.trade_repository import trade_repository
 from config.settings import settings
@@ -132,8 +132,9 @@ class TradingAgent:
 
     def _run_cycle(self) -> None:
         """Ejecuta un ciclo completo de análisis para todos los símbolos."""
-        # ── Paso 0: Sincronizar balance y posiciones cerradas ────────────────────
+        # ── Paso 0: Sincronizar balance, reconstruir posiciones y cierres ───────
         portfolio_tool.sync_from_exchange()
+        self._recover_open_positions_from_exchange()
         self._sync_closed_positions()
 
         all_market_data: Dict[str, dict] = {}
@@ -298,6 +299,81 @@ class TradingAgent:
             )
 
     # ── Sincronización de cierres (SL/TP) ───────────────────────────────────
+
+    def _recover_open_positions_from_exchange(self) -> None:
+        """
+        En modo real, reconstruye posiciones abiertas desde Binance tras un reinicio.
+
+        Esto permite que el agente vuelva a monitorear una posición ya existente,
+        detectar si se cerró por SL/TP mientras el proceso estaba caído y reflejarlo
+        correctamente en el portafolio interno.
+        """
+        if self.dry_run:
+            return
+
+        try:
+            open_positions = order_manager.get_open_positions()
+        except Exception as exc:
+            error_logger.error("Error recuperando posiciones abiertas desde Binance: %s", exc)
+            return
+
+        for exchange_pos in open_positions:
+            try:
+                symbol = str(exchange_pos.get("symbol", ""))
+                if not symbol or portfolio_tool.has_open_position(symbol):
+                    continue
+
+                position_amt = float(exchange_pos.get("positionAmt", 0) or 0)
+                if position_amt == 0:
+                    continue
+
+                entry_price = float(exchange_pos.get("entryPrice", 0) or 0)
+                if entry_price <= 0:
+                    continue
+
+                quantity = abs(position_amt)
+                direction = "LONG" if position_amt > 0 else "SHORT"
+
+                leverage = int(float(exchange_pos.get("leverage", settings.leverage) or settings.leverage))
+                notional = abs(float(exchange_pos.get("notional", 0) or 0))
+                capital_used = notional / max(leverage, 1) if notional > 0 else (entry_price * quantity) / max(leverage, 1)
+
+                stop_loss = 0.0
+                take_profit = 0.0
+                open_orders = order_manager.get_open_orders(symbol=symbol)
+                close_side = "SELL" if direction == "LONG" else "BUY"
+                for order in open_orders:
+                    if order.get("side") != close_side:
+                        continue
+                    order_type = str(order.get("type", ""))
+                    stop_price = float(order.get("stopPrice", 0) or 0)
+                    if stop_price <= 0:
+                        continue
+                    if order_type == "STOP_MARKET":
+                        stop_loss = stop_price
+                    elif order_type == "TAKE_PROFIT_MARKET":
+                        take_profit = stop_price
+
+                recovered = Position(
+                    symbol=symbol,
+                    direction=direction,
+                    entry_price=entry_price,
+                    quantity=quantity,
+                    capital_used=capital_used,
+                    stop_loss=stop_loss,
+                    take_profit=take_profit,
+                    order_id=str(exchange_pos.get("symbol", "")),
+                )
+                portfolio_tool.open_position(recovered)
+                logger.warning(
+                    "[%s] Posición recuperada tras reinicio | dir=%s | entry=%.6f | qty=%.6f | SL=%.6f | TP=%.6f",
+                    symbol, direction, entry_price, quantity, stop_loss, take_profit,
+                )
+                self.state.add_log(
+                    f"Posición recuperada tras reinicio: {direction} {symbol} @ {entry_price:.6f}"
+                )
+            except Exception as exc:
+                error_logger.error("Error recuperando posición %s: %s", exchange_pos.get('symbol'), exc)
 
     def _sync_closed_positions(self) -> None:
         """

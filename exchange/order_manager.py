@@ -231,6 +231,17 @@ class OrderManager:
             error_logger.error("get_open_positions error: %s", exc)
             return []
 
+    def get_open_orders(self, symbol: Optional[str] = None) -> list:
+        """Retorna órdenes abiertas del símbolo indicado."""
+        try:
+            return self._client.safe_call(
+                self._client.client.futures_get_open_orders,
+                symbol=symbol,
+            )
+        except BinanceAPIException as exc:
+            error_logger.error("get_open_orders(%s) error: %s", symbol, exc)
+            return []
+
 
 # Instancia global
 order_manager = OrderManager()
