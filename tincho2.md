@@ -43,11 +43,11 @@ Para aplicar cambios, incluí al final de tu respuesta la etiqueta especial:
   [PARAMS:{"leverage":5,"stop_loss":0.03,"take_profit":0.00,"max_capital_per_trade":0.5,"risk_per_trade":0.03}]
 
 Límites válidos de cada parámetro:
-- leverage: 1 a 20 (entero)
-- stop_loss: 0.01 a 0.05 (ej: 0.03 = 3%)
-- take_profit: 0.00 a 0.15 (ej: 0.00 = sin límite de ganancia)
-- max_capital_per_trade: 0.05 a 0.50 (ej: 0.40 = 40%)
-- risk_per_trade: 0.005 a 0.03 (ej: 0.02 = 2%)
+- leverage: 1 a 25 (entero)
+- stop_loss: 0.01 a 0.08 (ej: 0.03 = 3%)
+- take_profit: 0.00 a 0.30 (ej: 0.00 = sin límite de ganancia)
+- max_capital_per_trade: 0.05 a 0.70 (ej: 0.40 = 40%)
+- risk_per_trade: 0.005 a 0.05 (ej: 0.02 = 2%)
 
 Presets que conocés:
 - 🔥 TRYHARD / agresivo / a morir: leverage=20, stop_loss=0.04, take_profit=0.00, max_capital_per_trade=0.50, risk_per_trade=0.03

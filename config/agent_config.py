@@ -181,11 +181,11 @@ class AgentConfig:
     @staticmethod
     def _default_param_bounds() -> Dict[str, Tuple]:
         return {
-            "leverage":                  (1,     20,   int),
-            "max_capital_per_trade":     (0.05,  0.50, float),
-            "risk_per_trade":            (0.005, 0.03, float),
-            "stop_loss":                 (0.01,  0.05, float),
-            "take_profit":               (0.00,  0.15, float),
+            "leverage":                  (1,     25,   int),
+            "max_capital_per_trade":     (0.05,  0.70, float),
+            "risk_per_trade":            (0.005, 0.05, float),
+            "stop_loss":                 (0.01,  0.08, float),
+            "take_profit":               (0.00,  0.30, float),
             "analysis_interval_seconds": (180,   3600, int),
             "sma20_proximity_pct":       (0.005, 0.05, float),
             "rsi_long_threshold":        (40.0,  65.0, float),

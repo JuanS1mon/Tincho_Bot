@@ -72,11 +72,11 @@ La IA puede proponer ajustes dentro de estos rangos. Si propone un valor fuera d
 
 | parametro                   | min   | max   | tipo  | default |
 |-----------------------------|-------|-------|-------|---------|
-| leverage                    | 1     | 20    | int   | 8       |
-| max_capital_per_trade       | 0.05  | 0.50  | float | 0.50    |
-| risk_per_trade              | 0.005 | 0.03  | float | 0.015   |
-| stop_loss                   | 0.01  | 0.05  | float | 0.02    |
-| take_profit                 | 0.00  | 0.15  | float | 0.05    |
+| leverage                    | 1     | 25    | int   | 8       |
+| max_capital_per_trade       | 0.05  | 0.70  | float | 0.50    |
+| risk_per_trade              | 0.005 | 0.05  | float | 0.015   |
+| stop_loss                   | 0.01  | 0.08  | float | 0.02    |
+| take_profit                 | 0.00  | 0.30  | float | 0.05    |
 | analysis_interval_seconds   | 60    | 3600  | int   | 300     |
 | sma20_proximity_pct         | 0.005 | 0.08  | float | 0.05    |
 | rsi_long_threshold          | 30    | 65    | float | 40.0    |
@@ -111,8 +111,8 @@ Estas reglas son implementadas en código y NO pueden ser cambiadas por la IA, s
 - **Risk/Reward mínimo**: 1:2 (el TP debe ser al menos el doble que el SL en distancia de precio)
 - **Máximo de posiciones simultáneas por símbolo**: 1 (no se abre una nueva posición si ya hay una abierta)
 - **Stop Loss mínimo**: 1% del precio de entrada
-- **Stop Loss máximo**: 5% del precio de entrada
-- **Take Profit máximo**: 15% del precio de entrada
+- **Stop Loss máximo**: 8% del precio de entrada
+- **Take Profit máximo**: 30% del precio de entrada
 - **Take Profit = 0%**: desactiva el límite de ganancia (se deja correr hasta cierre por señal, trailing, bombarda o cierre manual)
 
 ---
