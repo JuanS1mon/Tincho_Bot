@@ -135,6 +135,7 @@ class TradingAgent:
         # ── Paso 0: Sincronizar balance, reconstruir posiciones y cierres ───────
         portfolio_tool.sync_from_exchange()
         self._recover_open_positions_from_exchange()
+        self._ensure_position_protection()
         self._sync_closed_positions()
 
         all_market_data: Dict[str, dict] = {}
@@ -380,6 +381,63 @@ class TradingAgent:
                 )
             except Exception as exc:
                 error_logger.error("Error recuperando posición %s: %s", exchange_pos.get('symbol'), exc)
+
+    def _ensure_position_protection(self) -> None:
+        """
+        Garantiza que posiciones abiertas tengan al menos Stop Loss en exchange.
+
+        Caso típico: al reiniciar, una posición puede existir en Binance sin órdenes
+        de protección vinculadas o sin haberse mapeado correctamente en memoria.
+        """
+        if self.dry_run:
+            return
+
+        stop_pct = max(0.0, float(parameters_manager.params.stop_loss or 0.0))
+        tp_pct = max(0.0, float(parameters_manager.params.take_profit or 0.0))
+
+        for symbol, pos in portfolio_tool.positions.items():
+            try:
+                close_side = "SELL" if pos.direction == "LONG" else "BUY"
+                open_orders = order_manager.get_open_orders(symbol=symbol)
+                for order in open_orders:
+                    if order.get("side") != close_side:
+                        continue
+                    order_type = str(order.get("type", ""))
+                    stop_price = float(order.get("stopPrice", 0) or 0)
+                    if stop_price <= 0:
+                        continue
+                    if order_type == "STOP_MARKET" and pos.stop_loss <= 0:
+                        pos.stop_loss = stop_price
+                    elif order_type == "TAKE_PROFIT_MARKET" and pos.take_profit <= 0:
+                        pos.take_profit = stop_price
+
+                if pos.stop_loss <= 0 and stop_pct > 0:
+                    stop_price = (
+                        pos.entry_price * (1 - stop_pct)
+                        if pos.direction == "LONG"
+                        else pos.entry_price * (1 + stop_pct)
+                    )
+                    side = "BUY" if pos.direction == "LONG" else "SELL"
+                    order_manager.set_stop_loss(symbol, side, stop_price, pos.quantity)
+                    pos.stop_loss = stop_price
+                    logger.warning(
+                        "[%s] Stop Loss faltante detectado y restaurado @ %.6f",
+                        symbol, stop_price,
+                    )
+
+                if pos.take_profit <= 0 and tp_pct > 0:
+                    tp_price = (
+                        pos.entry_price * (1 + tp_pct)
+                        if pos.direction == "LONG"
+                        else pos.entry_price * (1 - tp_pct)
+                    )
+                    side = "BUY" if pos.direction == "LONG" else "SELL"
+                    order_manager.set_take_profit(symbol, side, tp_price, pos.quantity)
+                    pos.take_profit = tp_price
+                    logger.info("[%s] Take Profit restaurado @ %.6f", symbol, tp_price)
+
+            except Exception as exc:
+                error_logger.error("[%s] No se pudo verificar/armar protecciones: %s", symbol, exc)
 
     def _sync_closed_positions(self) -> None:
         """

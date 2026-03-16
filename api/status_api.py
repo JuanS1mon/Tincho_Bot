@@ -644,7 +644,11 @@ def _build_market_context() -> str:
 
     if p.get("positions"):
         for sym, pos in p["positions"].items():
-            lines.append(f"  • {sym} {pos['direction']} @ entrada {pos['entry_price']:.4f} | SL: {pos['stop_loss']:.4f} | TP: {pos['take_profit']:.4f}")
+            tp_label = "OFF" if float(pos.get("take_profit", 0) or 0) <= 0 else f"{pos['take_profit']:.4f}"
+            sl_label = f"{pos['stop_loss']:.4f}"
+            lines.append(f"  • {sym} {pos['direction']} @ entrada {pos['entry_price']:.4f} | SL: {sl_label} | TP: {tp_label}")
+            if float(pos.get("stop_loss", 0) or 0) <= 0:
+                lines.append("    ⚠️ ALERTA: posición sin Stop Loss activo")
 
     # Mercado y señales (BTC/ETH del agente)
     if _agent is not None and _agent.state.market_snapshots:
@@ -675,6 +679,7 @@ def _build_market_context() -> str:
     # Parámetros de trading actuales (ajustables por la IA)
     lines.append(f"\n=== PARÁMETROS DE TRADING ACTUALES ===")
     lines.append(parameters_manager.summary())
+    lines.append("Nota: take_profit=0 significa TP desactivado (sin límite de ganancia), no es un error.")
 
     return "\n".join(lines)
 
