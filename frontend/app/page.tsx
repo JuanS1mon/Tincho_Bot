@@ -1016,6 +1016,7 @@ export default function Dashboard() {
         {port && (() => {
           const totalUnrealized = Object.values(port.positions).reduce((sum, pos) => sum + (pos.unrealized_pnl ?? 0), 0);
           const combinedPnl = port.total_pnl + totalUnrealized;
+          const combinedPnlPct = port.initial_capital > 0 ? (combinedPnl / port.initial_capital) * 100 : 0;
           const hasOpenPositions = positionCount > 0;
 
           // Win Rate en tiempo real: cerrados ganadores + abiertas en ganancia / total
@@ -1041,11 +1042,14 @@ export default function Dashboard() {
                 value={<span className="font-mono">{port.available_capital.toFixed(2)} USDT</span>}
               />
               <Stat
-                label="PnL Total"
+                label="Cartera Temporal"
                 value={<PnlValue value={combinedPnl} />}
-                sub={hasOpenPositions
-                  ? `Realiz: ${port.total_pnl >= 0 ? "+" : ""}${port.total_pnl.toFixed(4)} | Abierto: ${totalUnrealized >= 0 ? "+" : ""}${totalUnrealized.toFixed(4)}`
-                  : undefined}
+                sub={
+                  `${combinedPnlPct >= 0 ? "+" : ""}${combinedPnlPct.toFixed(2)}% sobre capital inicial` +
+                  (hasOpenPositions
+                    ? ` | Realiz: ${port.total_pnl >= 0 ? "+" : ""}${port.total_pnl.toFixed(4)} | Abierto: ${totalUnrealized >= 0 ? "+" : ""}${totalUnrealized.toFixed(4)}`
+                    : "")
+                }
               />
               <Stat
                 label="Win Rate Vivo"
@@ -1056,8 +1060,8 @@ export default function Dashboard() {
                 }
                 sub={
                   hasOpenPositions
-                    ? `${liveWinning}/${liveTotal} · ${openWinning} abierta${openWinning !== 1 ? "s" : ""} ganando`
-                    : `${port.winning_trades}/${port.total_trades} cerrados`
+                    ? `${liveWinning}/${liveTotal} · ${openWinning} abierta${openWinning !== 1 ? "s" : ""} ganando · aciertos, no rentabilidad`
+                    : `${port.winning_trades}/${port.total_trades} cerrados · aciertos, no rentabilidad`
                 }
               />
               <Stat
