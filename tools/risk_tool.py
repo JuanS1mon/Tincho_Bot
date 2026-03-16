@@ -97,6 +97,15 @@ class RiskTool:
         if quantity <= 0:
             return self._reject("Cantidad calculada inválida (≤ 0)")
 
+        # Binance Futures exige notional >= 100 USDT por orden (código -4164).
+        MIN_NOTIONAL = 100.0
+        if notional < MIN_NOTIONAL:
+            return self._reject(
+                f"Notional {notional:.2f} USDT < mínimo Binance 100 USDT "
+                f"(capital={capital_to_use:.2f} USDT × {self.max_leverage}x leverage). "
+                "Recargá capital o aumentá el leverage para poder operar."
+            )
+
         # ── Calcular SL / TP ──────────────────────────────────────────────────
         sl_price, tp_price = self._calc_sl_tp(direction, entry_price)
 

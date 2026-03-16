@@ -15,12 +15,13 @@ from tools.risk_tool import RiskTool, RiskParams
 @pytest.fixture
 def risk():
     t = RiskTool()
-    # Parámetros fijos para los tests
+    # Parámetros fijos para los tests.
+    # leverage=4 → notional mínimo con 100 USDT capital y 30% = 30*4 = 120 USDT (≥ 100, pasa filtro Binance)
     t.max_capital_pct = 0.30
     t.risk_per_trade = 0.01
     t.stop_loss_pct = 0.02
     t.take_profit_pct = 0.06
-    t.max_leverage = 3
+    t.max_leverage = 4
     t.trailing_callback_pct = 1.0
     return t
 
@@ -86,8 +87,15 @@ class TestRiskTool:
 
     def test_qty_calculada_con_leverage(self, risk):
         # qty = (capital * leverage) / price
-        # capital_to_use = 100 * 0.30 = 30; qty = (30 * 3) / 100 = 0.9
+        # capital_to_use = 100 * 0.30 = 30; qty = (30 * 4) / 100 = 1.2
         r = risk.validate("LONG", 100.0, available_capital=100, total_capital=100)
         assert r.is_valid
         expected_qty = (r.capital_to_use * risk.max_leverage) / 100.0
         assert abs(r.quantity - expected_qty) < 0.01
+
+    def test_rechaza_notional_bajo_minimo_binance(self, risk):
+        # Con leverage=4 y capital pequeño: notional = capital * 4 < 100 → rechazado
+        # capital_to_use = 24 * 0.30 = 7.2 USDT → notional = 7.2 * 4 = 28.8 USDT
+        r = risk.validate("LONG", 50000.0, available_capital=24, total_capital=24)
+        assert not r.is_valid
+        assert "100" in r.rejection_reason  # mensaje menciona el mínimo
