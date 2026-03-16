@@ -1023,10 +1023,14 @@ export default function Dashboard() {
           const liveWinning = port.winning_trades + openWinning;
           const liveTotal = port.total_trades + positionCount;
           const liveWinRate = liveTotal > 0 ? liveWinning / liveTotal : 0;
+          const closedWinRate = port.total_trades > 0 ? port.winning_trades / port.total_trades : 0;
+
+          const winRateColor = (value: number) =>
+            value >= 0.5 ? "text-green-400" : value > 0 ? "text-yellow-400" : "text-red-400";
 
           return (
           <Card title="Portafolio">
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-6 lg:gap-8">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-6 lg:gap-8">
               <Stat
                 label="Capital"
                 value={<span className="font-mono">{port.capital.toFixed(2)} USDT</span>}
@@ -1044,9 +1048,9 @@ export default function Dashboard() {
                   : undefined}
               />
               <Stat
-                label="Win Rate"
+                label="Win Rate Vivo"
                 value={
-                  <span className={liveWinRate >= 0.5 ? "text-green-400" : liveWinRate > 0 ? "text-yellow-400" : "text-red-400"}>
+                  <span className={winRateColor(liveWinRate)}>
                     {(liveWinRate * 100).toFixed(1)}%
                   </span>
                 }
@@ -1055,6 +1059,15 @@ export default function Dashboard() {
                     ? `${liveWinning}/${liveTotal} · ${openWinning} abierta${openWinning !== 1 ? "s" : ""} ganando`
                     : `${port.winning_trades}/${port.total_trades} cerrados`
                 }
+              />
+              <Stat
+                label="Win Rate Cierre"
+                value={
+                  <span className={winRateColor(closedWinRate)}>
+                    {(closedWinRate * 100).toFixed(1)}%
+                  </span>
+                }
+                sub={`${port.winning_trades}/${port.total_trades} trades cerrados`}
               />
               <Stat label="Posiciones" value={positionCount} />
               <Stat label="Total trades" value={port.total_trades} />
