@@ -54,7 +54,9 @@ class TradeRecord:
 class PortfolioTool:
     """Seguimiento en tiempo real del portafolio y posiciones."""
 
-    # Drawdown de sesión que dispara el circuit breaker (-15% por defecto).
+    # Drawdown máximo tolerado desde el pico de sesión.
+    # Se usa como referencia histórica/documental; el high-watermark dinámico
+    # ya no limita la ganancia máxima que puede correr.
     CIRCUIT_BREAKER_THRESHOLD = -0.15
     # Número de pérdidas consecutivas que activa el enfriamiento.
     MAX_CONSECUTIVE_LOSSES = 3
@@ -233,16 +235,18 @@ class PortfolioTool:
 
                 Lógica dinámica (high-watermark):
                     - Rastreamos el capital máximo de la sesión (session_peak_capital).
-                    - La pérdida máxima tolerada = min(ganancia_acumulada, 15%).
+                    - La pérdida máxima tolerada = ganancia_acumulada desde el inicio.
                     - Piso: siempre se permiten al menos 5% de drawdown antes de tener ganancias
                         para evitar que el CB se dispare en la primera micro-pérdida.
+                    - No hay cap superior: si llegás a +25%, el breaker puede tolerar
+                        hasta 25% desde el pico sin dejarte por debajo del capital inicial.
 
                 Ejemplos:
                     Ganaste  0% → toleramos hasta 5% de caída desde pico.
                     Ganaste  3% → toleramos hasta 5% (piso) desde pico.
                     Ganaste  8% → toleramos hasta 8% desde pico (nunca volverás a pérdida).
-                    Ganaste 15% → toleramos hasta 15% desde pico.
-                    Ganaste 20% → toleramos hasta 15% (cap) desde pico.
+                      Ganaste 15% → toleramos hasta 15% desde pico.
+                      Ganaste 20% → toleramos hasta 20% desde pico.
                 """
                 if self.session_peak_capital <= 0 or self.session_start_capital <= 0:
                         return False
@@ -250,9 +254,9 @@ class PortfolioTool:
                 # Ganancia acumulada desde el inicio hasta el pico.
                 gain_pct = (self.session_peak_capital - self.session_start_capital) / self.session_start_capital
 
-                # Límite: el menor entre la ganancia real y el cap de 15%,
+                # Límite: toda la ganancia acumulada desde el inicio,
                 # con un piso del 5% para cuando aún no hay ganancias significativas.
-                allowed_dd = max(self.CIRCUIT_BREAKER_FLOOR, min(gain_pct, abs(self.CIRCUIT_BREAKER_THRESHOLD)))
+                allowed_dd = max(self.CIRCUIT_BREAKER_FLOOR, gain_pct)
 
                 # Drawdown actual desde el pico.
                 dd_from_peak = (self.session_peak_capital - self.capital) / self.session_peak_capital
