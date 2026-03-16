@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
+import { useDraggableFloat } from "./hooks/useDraggableFloat";
 const MarquitosChat = dynamic(() => import("./MarquitosChat"), { ssr: false });
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -15,6 +16,8 @@ interface Portfolio {
   winning_trades: number;
   win_rate: number;
   open_positions: number;
+  closed_trades_pnl: number;
+  closed_trades_pnl_pct: number;
   positions: Record<string, Position>;
 }
 
@@ -512,6 +515,9 @@ function Tincho2Chat({
   const [loading, setLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  
+  // Draggable float for Tincho2
+  const tincho2Float = useDraggableFloat<HTMLButtonElement>("float_tincho2", { x: typeof window !== "undefined" ? window.innerWidth - 100 : 0, y: typeof window !== "undefined" ? window.innerHeight - 200 : 0 });
 
   // Scroll al último mensaje
   useEffect(() => {
@@ -559,12 +565,15 @@ function Tincho2Chat({
 
   return (
     <>
-      {/* Floating toggle button */}
+      {/* Floating toggle button - Draggeable */}
       <button
+        ref={tincho2Float.elementRef}
+        onMouseDown={tincho2Float.handleMouseDown}
         onClick={onToggle}
-        title="Hablar con Tincho2"
-        className="fixed bottom-48 right-4 z-40 w-14 h-14 rounded-full shadow-xl transition-all duration-150 active:scale-95 flex items-center justify-center text-2xl relative"
+        title="Hablar con Tincho2 - ¡Draggeable!"
+        className="w-14 h-14 rounded-full shadow-xl transition-all duration-150 active:scale-95 flex items-center justify-center text-2xl relative"
         style={{
+          ...tincho2Float.style,
           background: isOpen
             ? "radial-gradient(circle at 35% 35%, #c084fc, #9333ea 60%, #581c87)"
             : "radial-gradient(circle at 35% 35%, #a78bfa, #7c3aed 60%, #3b0764)",
@@ -577,12 +586,21 @@ function Tincho2Chat({
         )}
       </button>
 
-      {/* Chat panel */}
+      {/* Chat panel - Draggeable with button */}
       {isOpen && (
-        <div className="fixed bottom-[13rem] right-4 z-40 w-[22rem] max-h-[520px] rounded-2xl border border-purple-500/30 bg-[var(--card)] shadow-2xl shadow-purple-500/20 flex flex-col overflow-hidden">
+        <div 
+          style={{
+            ...tincho2Float.style,
+            position: 'fixed',
+            top: `${tincho2Float.position.y + 56}px`,
+            left: `${tincho2Float.position.x - 352}px`,
+            zIndex: 40,
+          } as React.CSSProperties}
+          className="w-[22rem] max-h-[520px] rounded-2xl border border-purple-500/30 bg-[var(--card)] shadow-2xl shadow-purple-500/20 flex flex-col overflow-hidden"
+        >
 
           {/* Header */}
-          <div className="px-4 py-3 border-b border-[var(--border)] bg-purple-500/8 flex items-center gap-3 flex-shrink-0">
+          <div className="px-4 py-3 border-b border-[var(--border)] bg-purple-500/8 flex items-center gap-3 flex-shrink-0 cursor-move" onMouseDown={tincho2Float.handleMouseDown}>
             <div className="w-9 h-9 rounded-full bg-gradient-to-br from-purple-500 to-violet-700 flex items-center justify-center text-lg flex-shrink-0 select-none shadow-md">🤖</div>
             <div className="flex-1 min-w-0">
               <div className="text-sm font-bold text-purple-200">Tincho2</div>
@@ -1333,49 +1351,75 @@ export default function Dashboard() {
       </main>
 
       {/* ── Floating action buttons (BULLISH + BOMBARDA) ── */}
-      <button
-        onClick={() => setShowBullish(true)}
-        title="Compra manual (BULLISH mode)"
-        className="fixed bottom-48 right-20 z-40 w-14 h-14 rounded-full shadow-xl transition-all duration-150 active:scale-95 flex items-center justify-center text-2xl"
-        style={{
-          background: "radial-gradient(circle at 35% 35%, #4ade80, #16a34a 60%, #14532d)",
-          boxShadow: "0 2px 0 #14532d, 0 4px 12px rgba(22,163,74,0.6), inset 0 1px 2px rgba(255,255,255,0.25)",
-        } as React.CSSProperties}
-      >
-        🐂
-      </button>
+      {/* BULLISH Button */}
+      {(() => {
+        const bullishFloat = useDraggableFloat<HTMLButtonElement>("float_bullish", { x: typeof window !== "undefined" ? window.innerWidth - 100 : 0, y: typeof window !== "undefined" ? window.innerHeight - 200 : 0 });
+        return (
+          <button
+            ref={bullishFloat.elementRef}
+            onMouseDown={bullishFloat.handleMouseDown}
+            onClick={() => setShowBullish(true)}
+            title="Compra manual (BULLISH mode) - ¡Draggeable!"
+            className="w-14 h-14 rounded-full shadow-xl transition-all duration-150 active:scale-95 flex items-center justify-center text-2xl"
+            style={{
+              ...bullishFloat.style,
+              background: "radial-gradient(circle at 35% 35%, #4ade80, #16a34a 60%, #14532d)",
+              boxShadow: "0 2px 0 #14532d, 0 4px 12px rgba(22,163,74,0.6), inset 0 1px 2px rgba(255,255,255,0.25)",
+            } as React.CSSProperties}
+          >
+            🐂
+          </button>
+        );
+      })()}
 
-      <button
-        onClick={() => { setBombardaResult(null); setShowBombarda(true); }}
-        title="Cerrar todas las posiciones (LA BOMBARDA)"
-        className="fixed bottom-48 right-32 z-40 w-14 h-14 rounded-full shadow-xl transition-all duration-150 active:scale-95 flex items-center justify-center text-2xl animate-pulse"
-        style={{
-          background: "radial-gradient(circle at 35% 35%, #f87171, #dc2626 60%, #7f1d1d)",
-          boxShadow: "0 2px 0 #7f1d1d, 0 4px 12px rgba(220,38,38,0.6), inset 0 1px 2px rgba(255,255,255,0.2)",
-        } as React.CSSProperties}
-      >
-        💣
-      </button>
+      {/* BOMBARDA Button */}
+      {(() => {
+        const bombardaFloat = useDraggableFloat<HTMLButtonElement>("float_bombarda", { x: typeof window !== "undefined" ? window.innerWidth - 140 : 0, y: typeof window !== "undefined" ? window.innerHeight - 200 : 0 });
+        return (
+          <button
+            ref={bombardaFloat.elementRef}
+            onMouseDown={bombardaFloat.handleMouseDown}
+            onClick={() => { setBombardaResult(null); setShowBombarda(true); }}
+            title="Cerrar todas las posiciones (LA BOMBARDA) - ¡Draggeable!"
+            className="w-14 h-14 rounded-full shadow-xl transition-all duration-150 active:scale-95 flex items-center justify-center text-2xl animate-pulse"
+            style={{
+              ...bombardaFloat.style,
+              background: "radial-gradient(circle at 35% 35%, #f87171, #dc2626 60%, #7f1d1d)",
+              boxShadow: "0 2px 0 #7f1d1d, 0 4px 12px rgba(220,38,38,0.6), inset 0 1px 2px rgba(255,255,255,0.2)",
+            } as React.CSSProperties}
+          >
+            💣
+          </button>
+        );
+      })()}
 
       {/* ── Marquitos Chat ── */}
       <>
-        {/* Botón flotante rojo a la izquierda */}
-        <button
-          onClick={() => setShowMarquitos(v => !v)}
-          title="Llamar a Marquitos"
-          className="fixed bottom-48 left-4 z-40 w-14 h-14 rounded-full shadow-xl transition-all duration-150 active:scale-95 flex items-center justify-center text-2xl relative"
-          style={{
-            background: showMarquitos
-              ? "radial-gradient(circle at 35% 35%, #f87171, #dc2626 60%, #7f1d1d)"
-              : "radial-gradient(circle at 35% 35%, #fca5a5, #ef4444 60%, #7f1d1d)",
-            boxShadow: "0 6px 0 #7f1d1d, 0 10px 20px rgba(220,38,38,0.5), inset 0 2px 4px rgba(255,255,255,0.2)",
-          } as React.CSSProperties}
-        >
-          {showMarquitos ? "✕" : "⚡"}
-          {!showMarquitos && (
-            <span className="absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-red-300 border-2 border-[var(--bg)] animate-ping" />
-          )}
-        </button>
+        {/* Botón flotante rojo a la izquierda - Marquitos */}
+        {(() => {
+          const marquitosFloat = useDraggableFloat<HTMLButtonElement>("float_marquitos", { x: 20, y: typeof window !== "undefined" ? window.innerHeight - 200 : 0 });
+          return (
+            <button
+              ref={marquitosFloat.elementRef}
+              onMouseDown={marquitosFloat.handleMouseDown}
+              onClick={() => setShowMarquitos(v => !v)}
+              title="Llamar a Marquitos - ¡Draggeable!"
+              className="w-14 h-14 rounded-full shadow-xl transition-all duration-150 active:scale-95 flex items-center justify-center text-2xl relative"
+              style={{
+                ...marquitosFloat.style,
+                background: showMarquitos
+                  ? "radial-gradient(circle at 35% 35%, #f87171, #dc2626 60%, #7f1d1d)"
+                  : "radial-gradient(circle at 35% 35%, #fca5a5, #ef4444 60%, #7f1d1d)",
+                boxShadow: "0 6px 0 #7f1d1d, 0 10px 20px rgba(220,38,38,0.5), inset 0 2px 4px rgba(255,255,255,0.2)",
+              } as React.CSSProperties}
+            >
+              {showMarquitos ? "✕" : "⚡"}
+              {!showMarquitos && (
+                <span className="absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-red-300 border-2 border-[var(--bg)] animate-ping" />
+              )}
+            </button>
+          );
+        })()}
         {/* Ventana MarquitosChat */}
         {showMarquitos && (
           <MarquitosChat isOpen={showMarquitos} onClose={() => setShowMarquitos(false)} />
