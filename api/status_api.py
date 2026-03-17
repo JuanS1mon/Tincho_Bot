@@ -734,17 +734,20 @@ async def chat_with_tincho2(req: ChatRequest) -> Dict[str, Any]:
     ])
 
     try:
-        response = client.chat.completions.create(
-            model=settings.ai_model,
-            messages=[
+        kwargs = {
+            "model": settings.ai_model,
+            "messages": [
                 {"role": "system", "content": system_content},
                 {"role": "user", "content": user_prompt},
             ],
-            tools=TINCHO2_TOOLS,
-            tool_choice="auto",
-            temperature=0.7,
-            max_tokens=600,
-        )
+            "temperature": 0.7,
+            "max_tokens": 600,
+        }
+        if settings.tool_calling_tincho2:
+            kwargs["tools"] = TINCHO2_TOOLS
+            kwargs["tool_choice"] = "auto"
+
+        response = client.chat.completions.create(**kwargs)
         message = response.choices[0].message
         reply = message.content or "No pude generar una respuesta."
     except Exception as exc:
@@ -755,7 +758,7 @@ async def chat_with_tincho2(req: ChatRequest) -> Dict[str, Any]:
     tool_used: Optional[str] = None
 
     tool_calls = getattr(message, "tool_calls", None) or []
-    if tool_calls:
+    if settings.tool_calling_tincho2 and tool_calls:
         call = tool_calls[0]
         fn = getattr(call, "function", None)
         name = str(getattr(fn, "name", "") or "").strip()
@@ -820,6 +823,12 @@ async def chat_with_tincho2(req: ChatRequest) -> Dict[str, Any]:
 
         else:
             reply = reply or "No pude ejecutar la herramienta solicitada."
+    elif not settings.tool_calling_tincho2:
+        import re as _re
+        params_match = _re.search(r"\[PARAMS:(\{.*?\})\]", reply, _re.DOTALL)
+        if params_match:
+            logger.info("Tincho2 envió [PARAMS], pero tool calling está desactivado")
+            reply = _re.sub(r"\s*\[PARAMS:\{.*?\}\]", "", reply, flags=_re.DOTALL).strip()
 
     logger.info(
         "💬 Tincho2: user=%r | tool=%r | reply=%r",

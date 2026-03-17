@@ -313,23 +313,26 @@ class MarquitosAgent:
             )
 
             client = _build_llm_client()
-            resp = client.chat.completions.create(
-                model=settings.ai_model,
-                messages=[
+            kwargs = {
+                "model": settings.ai_model,
+                "messages": [
                     {"role": "system", "content": _load_marquitos_md()},
                     {"role": "user", "content": user_prompt},
                 ],
-                tools=MARQUITOS_TOOLS,
-                tool_choice="auto",
-                temperature=0.3,
-                max_tokens=120,
-            )
+                "temperature": 0.3,
+                "max_tokens": 120,
+            }
+            if settings.tool_calling_marquitos:
+                kwargs["tools"] = MARQUITOS_TOOLS
+                kwargs["tool_choice"] = "auto"
+
+            resp = client.chat.completions.create(**kwargs)
             message = resp.choices[0].message
             raw = message.content or ""
             logger.info("🐺 [Marquitos] IA raw: %s", raw[:150])
 
             tool_calls = getattr(message, "tool_calls", None) or []
-            if tool_calls:
+            if settings.tool_calling_marquitos and tool_calls:
                 call = tool_calls[0]
                 fn = getattr(call, "function", None)
                 tool_name = str(getattr(fn, "name", "") or "").strip()

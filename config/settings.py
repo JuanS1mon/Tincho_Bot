@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     ai_model: str = "deepseek-chat"
     ai_api_key: str = ""
     ai_base_url: str = "https://api.deepseek.com"
+    # Feature flags para migración gradual a function/tool calling.
+    tool_calling_tincho1: bool = False
+    tool_calling_tincho2: bool = False
+    tool_calling_marquitos: bool = False
 
     # ── Trading ───────────────────────────────────────────────────────────────
     initial_capital: float = 100.0

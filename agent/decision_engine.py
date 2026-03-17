@@ -142,89 +142,97 @@ class DecisionEngine:
             target_symbol=symbol,
             target_direction=direction,
         )
-        tool_result = llm_client.decide_with_tools(
-            system_prompt=agent_config.system_prompt,
-            user_prompt=user_prompt,
-            tools=TINCHO1_TOOLS,
-            temperature=0.2,
-            max_tokens=300,
-        )
-
-        if tool_result is None:
-            reason = "IA no respondió o tool calling inválido — operación cancelada"
-            error_logger.error("[%s] %s", symbol, reason)
-            state.add_log(reason)
-            return False, reason
-
-        tool_name = (tool_result.tool_name or "").strip()
-        tool_args = tool_result.arguments or {}
-
-        if tool_name == "skip_trade":
-            reason = str(tool_args.get("reason", "IA decidió no operar"))[:220]
-            logger.info("[%s] 🤖 Tool skip_trade: %s", symbol, reason)
-            state.add_log(f"[IA tool] skip_trade | {reason}")
-            return False, reason
-
-        if tool_name == "adjust_parameters":
-            adjustments = dict(tool_args)
-            rationale = str(adjustments.pop("reasoning", "Ajuste por tool calling IA"))[:200]
-            changed = parameters_manager.apply_adjustments(
-                adjustments,
-                reason=f"Trade cycle tool: {rationale}",
+        if settings.tool_calling_tincho1:
+            tool_result = llm_client.decide_with_tools(
+                system_prompt=agent_config.system_prompt,
+                user_prompt=user_prompt,
+                tools=TINCHO1_TOOLS,
+                temperature=0.2,
+                max_tokens=300,
             )
-            if changed:
-                reason = f"IA ajustó parámetros y omitió trade: {adjustments}"
+
+            if tool_result is None:
+                reason = "IA no respondió o tool calling inválido — operación cancelada"
+                error_logger.error("[%s] %s", symbol, reason)
+                state.add_log(reason)
+                return False, reason
+
+            tool_name = (tool_result.tool_name or "").strip()
+            tool_args = tool_result.arguments or {}
+
+            if tool_name == "skip_trade":
+                reason = str(tool_args.get("reason", "IA decidió no operar"))[:220]
+                logger.info("[%s] 🤖 Tool skip_trade: %s", symbol, reason)
+                state.add_log(f"[IA tool] skip_trade | {reason}")
+                return False, reason
+
+            if tool_name == "adjust_parameters":
+                adjustments = dict(tool_args)
+                rationale = str(adjustments.pop("reasoning", "Ajuste por tool calling IA"))[:200]
+                changed = parameters_manager.apply_adjustments(
+                    adjustments,
+                    reason=f"Trade cycle tool: {rationale}",
+                )
+                if changed:
+                    reason = f"IA ajustó parámetros y omitió trade: {adjustments}"
+                    state.add_log(reason)
+                    logger.info("[%s] %s", symbol, reason)
+                    return False, reason
+                reason = "IA pidió ajustar parámetros pero no hubo cambios válidos"
                 state.add_log(reason)
                 logger.info("[%s] %s", symbol, reason)
                 return False, reason
-            reason = "IA pidió ajustar parámetros pero no hubo cambios válidos"
-            state.add_log(reason)
-            logger.info("[%s] %s", symbol, reason)
-            return False, reason
 
-        if tool_name == "close_position":
-            close_symbol = str(tool_args.get("symbol", "")).upper().strip()
-            close_reason = str(tool_args.get("reason", "Cierre solicitado por IA"))[:200]
-            closed, close_msg = self._close_position_from_tool(close_symbol, close_reason)
-            state.add_log(f"[IA tool] close_position {close_symbol}: {close_msg}")
-            logger.info("[%s] 🤖 Tool close_position: %s", symbol, close_msg)
-            return False, close_msg
+            if tool_name == "close_position":
+                close_symbol = str(tool_args.get("symbol", "")).upper().strip()
+                close_reason = str(tool_args.get("reason", "Cierre solicitado por IA"))[:200]
+                _closed, close_msg = self._close_position_from_tool(close_symbol, close_reason)
+                state.add_log(f"[IA tool] close_position {close_symbol}: {close_msg}")
+                logger.info("[%s] 🤖 Tool close_position: %s", symbol, close_msg)
+                return False, close_msg
 
-        if tool_name != "open_position":
-            reason = f"Tool no soportada para trading: {tool_name or 'N/A'}"
-            error_logger.error("[%s] %s", symbol, reason)
-            state.add_log(reason)
-            return False, reason
+            if tool_name != "open_position":
+                reason = f"Tool no soportada para trading: {tool_name or 'N/A'}"
+                error_logger.error("[%s] %s", symbol, reason)
+                state.add_log(reason)
+                return False, reason
 
-        if tool_result.fallback_decision is not None:
-            ai_decision = tool_result.fallback_decision
+            if tool_result.fallback_decision is not None:
+                ai_decision = tool_result.fallback_decision
+            else:
+                ai_symbol = str(tool_args.get("symbol", symbol)).upper().strip()
+                ai_direction = str(tool_args.get("direction", direction)).upper().strip()
+                ai_capital_usage = max(0.0, min(float(tool_args.get("capital_usage", 0.0) or 0.0), 0.50))
+                ai_reasoning = str(tool_args.get("reasoning", "Decisión vía tool calling"))[:200]
+                ai_decision = AIDecision(
+                    trade=True,
+                    symbol=ai_symbol,
+                    direction=ai_direction,
+                    capital_usage=ai_capital_usage,
+                    confidence=1.0,
+                    reasoning=ai_reasoning,
+                    raw_response=tool_result.raw_response,
+                    parameter_adjustments=None,
+                )
+
+            if ai_decision.symbol != symbol:
+                reason = f"Tool intentó abrir {ai_decision.symbol}, pero este ciclo es de {symbol}"
+                logger.info("[%s] %s", symbol, reason)
+                state.add_log(reason)
+                return False, reason
+
+            if ai_decision.direction != direction:
+                reason = f"Tool intentó dirección {ai_decision.direction}, esperada {direction}"
+                logger.info("[%s] %s", symbol, reason)
+                state.add_log(reason)
+                return False, reason
         else:
-            ai_symbol = str(tool_args.get("symbol", symbol)).upper().strip()
-            ai_direction = str(tool_args.get("direction", direction)).upper().strip()
-            ai_capital_usage = max(0.0, min(float(tool_args.get("capital_usage", 0.0) or 0.0), 0.50))
-            ai_reasoning = str(tool_args.get("reasoning", "Decisión vía tool calling"))[:200]
-            ai_decision = AIDecision(
-                trade=True,
-                symbol=ai_symbol,
-                direction=ai_direction,
-                capital_usage=ai_capital_usage,
-                confidence=1.0,
-                reasoning=ai_reasoning,
-                raw_response=tool_result.raw_response,
-                parameter_adjustments=None,
-            )
-
-        if ai_decision.symbol != symbol:
-            reason = f"Tool intentó abrir {ai_decision.symbol}, pero este ciclo es de {symbol}"
-            logger.info("[%s] %s", symbol, reason)
-            state.add_log(reason)
-            return False, reason
-
-        if ai_decision.direction != direction:
-            reason = f"Tool intentó dirección {ai_decision.direction}, esperada {direction}"
-            logger.info("[%s] %s", symbol, reason)
-            state.add_log(reason)
-            return False, reason
+            ai_decision = llm_client.decide(user_prompt)
+            if ai_decision is None:
+                reason = "IA no respondió o respuesta inválida — operación cancelada"
+                error_logger.error("[%s] %s", symbol, reason)
+                state.add_log(reason)
+                return False, reason
 
         state.last_ai_decision = AIDecisionState(
             trade=ai_decision.trade,
