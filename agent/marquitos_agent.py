@@ -31,6 +31,7 @@ from tools.marquitos_coin_finder import coin_finder
 from agent.marquitos_brain import marquitos_brain
 from config.settings import settings
 from config.logger import trading_logger as logger, error_logger
+from ai.tool_definitions import MARQUITOS_TOOLS
 
 # ── Configuración ─────────────────────────────────────────────────────────────
 MARQUITOS_TIMEFRAME: str = "1m"
@@ -318,11 +319,48 @@ class MarquitosAgent:
                     {"role": "system", "content": _load_marquitos_md()},
                     {"role": "user", "content": user_prompt},
                 ],
+                tools=MARQUITOS_TOOLS,
+                tool_choice="auto",
                 temperature=0.3,
                 max_tokens=120,
             )
-            raw = resp.choices[0].message.content or ""
+            message = resp.choices[0].message
+            raw = message.content or ""
             logger.info("🐺 [Marquitos] IA raw: %s", raw[:150])
+
+            tool_calls = getattr(message, "tool_calls", None) or []
+            if tool_calls:
+                call = tool_calls[0]
+                fn = getattr(call, "function", None)
+                tool_name = str(getattr(fn, "name", "") or "").strip()
+                raw_args = str(getattr(fn, "arguments", "") or "{}").strip()
+                try:
+                    args = json.loads(raw_args) if raw_args else {}
+                except Exception:
+                    args = {}
+
+                if tool_name == "skip_all":
+                    reason = str(args.get("reason", "IA decidió no operar"))[:200]
+                    self.last_ai_decision = f"No operar — {reason}"
+                    logger.info("🐺 [Marquitos] tool skip_all: %s", reason)
+                    return None
+
+                if tool_name == "execute_scalp":
+                    symbol = str(args.get("symbol", "")).upper().strip()
+                    side = str(args.get("direction", "")).upper().strip()
+                    reason = str(args.get("reasoning", ""))[:200]
+                    self.last_ai_decision = (
+                        f"Elegido (tool): {symbol} {side} — {reason}" if symbol else "No operar"
+                    )
+                    for c in candidates:
+                        if c["symbol"] == symbol:
+                            chosen_side = side if side in {"LONG", "SHORT"} else c.get("direction_hint", "LONG")
+                            out = dict(c)
+                            out["side"] = chosen_side
+                            logger.info("🐺 [Marquitos] tool execute_scalp: %s %s", symbol, chosen_side)
+                            return out
+                    logger.warning("🐺 [Marquitos] tool execute_scalp eligió símbolo no listado: %s", symbol)
+                    return None
 
             # Parsear JSON de la respuesta
             raw_clean = raw.strip()

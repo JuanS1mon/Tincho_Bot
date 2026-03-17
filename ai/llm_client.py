@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from openai import OpenAI
 
@@ -31,6 +31,15 @@ class AIDecision:
     reasoning: str
     raw_response: str                       # respuesta cruda para logs
     parameter_adjustments: Optional[Dict[str, Any]] = None  # ajustes sugeridos por la IA
+
+
+@dataclass
+class ToolCallResult:
+    tool_name: str
+    arguments: Dict[str, Any]
+    raw_response: str
+    reasoning: str = ""
+    fallback_decision: Optional[AIDecision] = None
 
 
 class LLMClient:
@@ -170,6 +179,99 @@ class LLMClient:
 
         logger.info("🌍 Tincho1 market overview: %s | params=%s", reasoning, param_adj)
         return {"reasoning": reasoning, "parameter_adjustments": param_adj}
+
+    def decide_with_tools(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        tools: List[Dict[str, Any]],
+        temperature: float = 0.2,
+        max_tokens: int = 300,
+    ) -> Optional[ToolCallResult]:
+        """
+        Ejecuta function calling con fallback al parser JSON legacy.
+
+        - Si el modelo devuelve tool_calls, retorna la primera tool.
+        - Si no devuelve tools, intenta parsear JSON legacy con _parse_response().
+        """
+        try:
+            response = self._client.chat.completions.create(
+                model=settings.ai_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                tools=tools,
+                tool_choice="auto",
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+        except Exception as exc:
+            error_logger.error("LLMClient.decide_with_tools error: %s", exc)
+            return None
+
+        message = response.choices[0].message
+        raw = message.content or ""
+        tool_calls = getattr(message, "tool_calls", None) or []
+
+        if tool_calls:
+            call = tool_calls[0]
+            fn = getattr(call, "function", None)
+            if fn is None:
+                error_logger.error("decide_with_tools: tool_call sin function")
+                return None
+
+            name = str(getattr(fn, "name", "") or "").strip()
+            args_raw = str(getattr(fn, "arguments", "") or "{}").strip()
+            try:
+                args = json.loads(args_raw) if args_raw else {}
+            except json.JSONDecodeError:
+                logger.warning("decide_with_tools: argumentos no-JSON, se usa dict vacio")
+                args = {}
+
+            logger.info("🤖 Tool selected: %s | args=%s", name, args)
+            return ToolCallResult(
+                tool_name=name,
+                arguments=args,
+                raw_response=raw,
+                reasoning=raw[:200],
+            )
+
+        # Fallback legacy: modelo no emitio tool calls.
+        legacy_decision = self._parse_response(raw)
+        if legacy_decision is None:
+            logger.warning("decide_with_tools: sin tool_calls y fallback legacy invalido")
+            return None
+
+        fallback_name = "open_position" if legacy_decision.trade else "skip_trade"
+        fallback_args: Dict[str, Any]
+        if legacy_decision.trade:
+            fallback_args = {
+                "symbol": legacy_decision.symbol,
+                "direction": legacy_decision.direction,
+                "capital_usage": legacy_decision.capital_usage,
+                "reasoning": legacy_decision.reasoning,
+            }
+        else:
+            fallback_args = {
+                "reason": legacy_decision.reasoning or "La IA decidio no operar",
+            }
+
+        if legacy_decision.parameter_adjustments:
+            fallback_name = "adjust_parameters"
+            fallback_args = dict(legacy_decision.parameter_adjustments)
+            if legacy_decision.reasoning:
+                fallback_args["reasoning"] = legacy_decision.reasoning
+
+        logger.info("decide_with_tools: fallback legacy -> %s", fallback_name)
+        return ToolCallResult(
+            tool_name=fallback_name,
+            arguments=fallback_args,
+            raw_response=raw,
+            reasoning=legacy_decision.reasoning,
+            fallback_decision=legacy_decision,
+        )
 
 
 # Instancia global

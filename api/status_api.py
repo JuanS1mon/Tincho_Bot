@@ -36,6 +36,7 @@ from config.logger import trading_logger as logger
 
 from api.marquitos_state import router as marquitos_router
 from api.marquitos_chat import router as marquitos_chat_router
+from ai.tool_definitions import TINCHO2_TOOLS
 
 if TYPE_CHECKING:
     from agent.trading_agent import TradingAgent
@@ -706,8 +707,6 @@ async def chat_with_tincho2(req: ChatRequest) -> Dict[str, Any]:
     con contexto del estado actual del bot como system prompt.
     Si la respuesta incluye [PARAMS:{...}], aplica los cambios al parameters_manager.
     """
-    import json as _json
-    import re as _re
     from openai import OpenAI
 
     client = OpenAI(
@@ -721,36 +720,114 @@ async def chat_with_tincho2(req: ChatRequest) -> Dict[str, Any]:
     tincho2_prompt = _load_tincho2_prompt()
     system_content = f"{tincho2_prompt}\n\n{market_ctx}"
 
-    # Construir historial de mensajes
-    messages: list[Dict[str, str]] = [{"role": "system", "content": system_content}]
+    # Comprimir historial en un único user_prompt para tool calling.
+    history_lines: list[str] = []
     for msg in req.history[-12:]:
         if msg.role in ("user", "assistant"):
-            messages.append({"role": msg.role, "content": msg.content})
-    messages.append({"role": "user", "content": req.message})
+            role = "USER" if msg.role == "user" else "ASSISTANT"
+            history_lines.append(f"{role}: {msg.content}")
+    user_prompt = "\n".join([
+        "Historial reciente:",
+        *history_lines,
+        f"\nMensaje actual del usuario: {req.message}",
+        "\nSi corresponde, usa una tool para actuar. Si no, responde normalmente.",
+    ])
 
     try:
         response = client.chat.completions.create(
             model=settings.ai_model,
-            messages=messages,  # type: ignore[arg-type]
+            messages=[
+                {"role": "system", "content": system_content},
+                {"role": "user", "content": user_prompt},
+            ],
+            tools=TINCHO2_TOOLS,
+            tool_choice="auto",
             temperature=0.7,
             max_tokens=600,
         )
-        reply = response.choices[0].message.content or "No pude generar una respuesta."
+        message = response.choices[0].message
+        reply = message.content or "No pude generar una respuesta."
     except Exception as exc:
         logger.error("Tincho2 chat error: %s", exc)
         raise HTTPException(status_code=502, detail=f"Error consultando IA: {exc}")
 
-    # Detectar etiqueta [PARAMS:{...}] pero NO aplicar cambios desde Tincho2.
-    # Las modificaciones de parámetros deben venir del flujo de Tincho1/auto-modo.
     params_applied: Dict[str, Any] | None = None
-    params_match = _re.search(r"\[PARAMS:(\{.*?\})\]", reply, _re.DOTALL)
-    if params_match:
-        logger.info("Tincho2 envió [PARAMS], pero la aplicación de ajustes por chat está desactivada")
-        # Limpiar la etiqueta del texto visible
-        reply = _re.sub(r"\s*\[PARAMS:\{.*?\}\]", "", reply, flags=_re.DOTALL).strip()
+    tool_used: Optional[str] = None
 
-    logger.info("💬 Tincho2: user=%r | reply=%r", req.message[:60], reply[:80])
-    return {"reply": reply, "paramsApplied": params_applied}
+    tool_calls = getattr(message, "tool_calls", None) or []
+    if tool_calls:
+        call = tool_calls[0]
+        fn = getattr(call, "function", None)
+        name = str(getattr(fn, "name", "") or "").strip()
+        raw_args = str(getattr(fn, "arguments", "") or "{}").strip()
+        tool_used = name
+
+        try:
+            import json as _json
+            args = _json.loads(raw_args) if raw_args else {}
+        except Exception:
+            args = {}
+
+        if name == "apply_parameters":
+            adjustments = dict(args)
+            rationale = str(adjustments.pop("reasoning", "Ajuste solicitado por Tincho2"))[:200]
+            changed = parameters_manager.apply_adjustments(
+                adjustments,
+                reason=f"Tincho2 tool: {rationale}",
+            )
+            params_applied = adjustments if changed else None
+            if changed:
+                reply = (
+                    "Listo. Apliqué los parámetros solicitados: "
+                    f"{adjustments}."
+                )
+            else:
+                reply = "Intenté aplicar ajustes, pero no hubo cambios válidos."
+
+        elif name == "get_market_snapshot":
+            symbol = str(args.get("symbol", "")).upper().strip()
+            if symbol and not symbol.endswith("USDT"):
+                symbol = symbol + "USDT"
+            snap = _agent.state.market_snapshots.get(symbol) if (_agent and symbol) else None
+            sig = _agent.state.signals.get(symbol) if (_agent and symbol) else None
+            if snap is None:
+                reply = f"No tengo snapshot reciente de {symbol or 'ese símbolo'} ahora mismo."
+            else:
+                sig_txt = sig.signal if sig else "N/A"
+                reply = (
+                    f"{symbol}: precio={snap.price:.4f}, tendencia={snap.trend}, RSI={snap.rsi:.1f}, "
+                    f"vol={snap.volume_trend}, OI={snap.oi_trend}, señal={sig_txt}."
+                )
+
+        elif name == "open_manual_position":
+            symbol = str(args.get("symbol", "")).upper().strip()
+            pct = float(args.get("pct_capital", 0.0) or 0.0)
+            if symbol and not symbol.endswith("USDT"):
+                symbol = symbol + "USDT"
+            if not (0.01 <= pct <= 0.50):
+                reply = "No abrí posición: pct_capital debe estar entre 0.01 y 0.50."
+            else:
+                try:
+                    result = await bullish_buy(BullishRequest(symbol=symbol, pct=pct))
+                    reply = (
+                        f"Posición manual abierta en {result['symbol']} con {result['capital_used']:.2f} USDT "
+                        f"(leverage {result['leverage']}x)."
+                    )
+                except HTTPException as exc:
+                    reply = f"No pude abrir posición manual: {exc.detail}"
+                except Exception as exc:
+                    reply = f"No pude abrir posición manual: {exc}"
+
+        else:
+            reply = reply or "No pude ejecutar la herramienta solicitada."
+
+    logger.info(
+        "💬 Tincho2: user=%r | tool=%r | reply=%r",
+        req.message[:60],
+        tool_used,
+        reply[:80],
+    )
+    return {"reply": reply, "paramsApplied": params_applied, "toolUsed": tool_used}
 
 
 @app.post("/marquitos/start", summary="Llamar a Marquitos (activar scalper)")
