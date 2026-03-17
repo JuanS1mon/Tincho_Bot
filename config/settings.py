@@ -40,9 +40,21 @@ class Settings(BaseSettings):
     risk_per_trade: float = 0.015
     stop_loss: float = 0.02
     take_profit: float = 0.05
+    # Retroceso permitido desde el pico de ganancia antes de cerrar por profit lock.
+    # Ej: 0.15 = cierra al perder 15% del pico de PnL no realizado.
+    profit_lock_retrace_pct: float = 0.15
     timeframe: str = "15m"
     analysis_interval_seconds: int = 300
     min_winrate: float = 0.45
+
+    #  Capital Optimizer (reallocación dinámica) 
+    capital_reallocation_enabled: bool = True
+    capital_reallocation_min_divergence_pct: float = 4.0
+    capital_reallocation_check_interval_cycles: int = 5
+    capital_reallocation_min_amount: float = 10.0
+    capital_reallocation_confirm_cycles: int = 3
+    capital_reallocation_fee_slippage_pct: float = 0.35
+    capital_reallocation_min_net_edge_pct: float = 0.8
 
     # ── MongoDB ───────────────────────────────────────────────────────────────
     mongo_uri: str = "mongodb://localhost:27017"
@@ -55,7 +67,10 @@ class Settings(BaseSettings):
     @property
     def symbols(self) -> List[str]:
         """Parsea SYMBOLS (o SYMBOLS_CSV) desde string CSV."""
-        return [s.strip().upper() for s in self.symbols_csv.split(",") if s.strip()]
+        # Permite comentar el resto de la línea con '#' en .env
+        # Ej: SYMBOLS_CSV=BTCUSDT,ETHUSDT #,XAUUSDT,XAGUSDT
+        raw = self.symbols_csv.split("#", 1)[0]
+        return [s.strip().upper() for s in raw.split(",") if s.strip()]
 
     @property
     def base_dir(self) -> Path:

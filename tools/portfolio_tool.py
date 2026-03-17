@@ -67,7 +67,7 @@ class PortfolioTool:
     CIRCUIT_BREAKER_FLOOR = 0.05
     # Si una operación llegó a un pico de ganancia, se cierra cuando retrocede
     # más de este porcentaje desde ese pico (profit lock dinámico por posición).
-    PROFIT_LOCK_RETRACE_PCT = 0.15
+    PROFIT_LOCK_RETRACE_PCT = settings.profit_lock_retrace_pct
 
     def __init__(self) -> None:
         self.capital: float = settings.initial_capital
@@ -227,9 +227,19 @@ class PortfolioTool:
         if peak_pnl <= 0:
             return False, pnl_now, peak_pnl, 0.0
 
-        floor_pnl = peak_pnl * (1.0 - self.PROFIT_LOCK_RETRACE_PCT)
+        floor_pnl = peak_pnl * (1.0 - self.get_profit_lock_retrace_pct())
         triggered = pnl_now <= floor_pnl
         return triggered, pnl_now, peak_pnl, floor_pnl
+
+    def get_profit_lock_retrace_pct(self) -> float:
+        """Retorna retrace dinámico para profit lock (prioriza parámetros vivos del agente)."""
+        try:
+            from agent.parameters_manager import parameters_manager
+            val = float(getattr(parameters_manager.params, "profit_lock_retrace_pct", self.PROFIT_LOCK_RETRACE_PCT) or 0)
+        except Exception:
+            val = float(self.PROFIT_LOCK_RETRACE_PCT)
+        # Guardas defensivas para evitar valores extremos por datos corruptos
+        return max(0.01, min(0.90, val))
 
     def close_position(self, symbol: str, exit_price: float, strategy: str = "") -> Optional[TradeRecord]:
         """Cierra una posición y registra el resultado."""

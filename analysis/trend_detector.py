@@ -1,12 +1,19 @@
 """
 analysis/trend_detector.py
 ==========================
-Detecta la tendencia con SMA20 vs SMA50 y una zona neutral configurable.
+Detecta la tendencia con SMA20 vs SMA50 y una zona neutral configurable,
+con excepción para reversión temprana cuando el precio/RSI/MACD confirman
+fuerza de corto plazo.
 
-Reglas:
+Reglas base:
     BULLISH: SMA20 > SMA50 con diferencia >= 0.1%
     BEARISH: SMA20 < SMA50 con diferencia <= -0.1%
     NEUTRAL: diferencia absoluta < 0.1%
+
+Regla de reversión temprana:
+    Si la diferencia SMA20-SMA50 aún no es extrema, pero el precio está por
+    encima/debajo de SMA20 con RSI y MACD-hist coherentes, se permite clasificar
+    como BULLISH/BEARISH para no llegar tarde a cambios de régimen.
 """
 from __future__ import annotations
 
@@ -25,6 +32,9 @@ class TrendDetector:
     """Determina la tendencia de mercado a partir de las tres medias móviles."""
 
     NEUTRAL_THRESHOLD_PCT = 0.1
+    REVERSAL_MAX_GAP_PCT = 1.0
+    REVERSAL_RSI_BULL = 52.0
+    REVERSAL_RSI_BEAR = 48.0
 
     def detect(self, indicators: Indicators) -> Trend:
         sma20  = indicators.sma20
@@ -34,6 +44,27 @@ class TrendDetector:
             return Trend.NEUTRAL
 
         diff_pct = (sma20 - sma50) / sma50 * 100
+
+        # Reversión temprana: mercado aún no cruzó SMA20/SMA50 pero el impulso
+        # de corto plazo es claro y consistente.
+        if (
+            diff_pct < 0
+            and abs(diff_pct) <= self.REVERSAL_MAX_GAP_PCT
+            and indicators.price > sma20
+            and indicators.rsi >= self.REVERSAL_RSI_BULL
+            and indicators.macd_hist > 0
+        ):
+            return Trend.BULLISH
+
+        if (
+            diff_pct > 0
+            and abs(diff_pct) <= self.REVERSAL_MAX_GAP_PCT
+            and indicators.price < sma20
+            and indicators.rsi <= self.REVERSAL_RSI_BEAR
+            and indicators.macd_hist < 0
+        ):
+            return Trend.BEARISH
+
         if abs(diff_pct) < self.NEUTRAL_THRESHOLD_PCT:
             return Trend.NEUTRAL
         if diff_pct > 0:

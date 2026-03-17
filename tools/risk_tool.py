@@ -21,6 +21,7 @@ class RiskParams:
     """Parámetros de riesgo calculados para un trade."""
     is_valid: bool
     rejection_reason: str
+    leverage: int          # apalancamiento validado para esta orden
     quantity: float          # cantidad en contratos/monedas
     capital_to_use: float    # USDT a utilizar
     entry_price: float       # precio de entrada real
@@ -127,6 +128,7 @@ class RiskTool:
         return RiskParams(
             is_valid=True,
             rejection_reason="",
+            leverage=self.max_leverage,
             quantity=round(quantity, 4),
             capital_to_use=round(capital_to_use, 2),
             entry_price=round(entry_price, 6),
@@ -152,6 +154,7 @@ class RiskTool:
         return RiskParams(
             is_valid=False,
             rejection_reason=reason,
+            leverage=0,
             quantity=0,
             capital_to_use=0,
             stop_loss_price=0,

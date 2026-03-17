@@ -42,6 +42,7 @@ class DecisionEngine:
 
     def __init__(self, dry_run: bool = False) -> None:
         self.dry_run = dry_run
+        self._min_notional_usdt = 100.0
 
     def evaluate(
         self,
@@ -63,6 +64,11 @@ class DecisionEngine:
         if portfolio_tool.has_open_position(symbol):
             reason = f"Ya hay posición abierta en {symbol}, saltando"
             logger.info(reason)
+            state.add_log(reason)
+            return False, reason
+        if execution_tool.is_symbol_blocked(symbol):
+            reason = f"Símbolo bloqueado: {execution_tool.get_block_reason(symbol)}"
+            logger.warning("[%s] %s", symbol, reason)
             state.add_log(reason)
             return False, reason
         # ── 0.1 Circuit breaker de sesión ───────────────────────────────────────────────
@@ -110,7 +116,7 @@ class DecisionEngine:
 
         # ── 2. Hard rules algorítmicas (nunca delegar a la IA) ────────────────────
         blocked, block_reason = self._check_hard_rules(
-            symbol, direction, indicators, sim, funding_rate
+            symbol, direction, indicators, sim, funding_rate, signal.strategy
         )
         if blocked:
             logger.info("[%s] Hard rule bloqueada: %s", symbol, block_reason)
@@ -181,6 +187,20 @@ class DecisionEngine:
         # Capital global compartido: la IA decide cuánto usar del total disponible.
         symbol_allocation = portfolio_tool.capital
         symbol_available = portfolio_tool.available_capital
+        try:
+            from exchange.market_fetcher import market_fetcher
+            exchange_available = market_fetcher.get_usdt_available_balance()
+            if exchange_available is not None:
+                symbol_available = min(symbol_available, exchange_available)
+                logger.info(
+                    "[%s] Capital disponible ajustado por exchange: local=%.2f | exchange=%.2f | usado=%.2f",
+                    symbol,
+                    portfolio_tool.available_capital,
+                    exchange_available,
+                    symbol_available,
+                )
+        except Exception as exc:
+            logger.warning("[%s] No se pudo ajustar capital por exchange: %s", symbol, exc)
 
         current_price = indicators.price
         risk_params: RiskParams = risk_tool.validate(
@@ -190,6 +210,42 @@ class DecisionEngine:
             total_capital=symbol_allocation,
             capital_usage=ai_decision.capital_usage,
         )
+
+        if not risk_params.is_valid and "Notional" in risk_params.rejection_reason:
+            # Si el único bloqueo es notional mínimo, podemos subir capital_usage
+            # únicamente con confluencia alta para no forzar trades débiles.
+            boosted_usage = self._compute_boosted_capital_usage_for_min_notional(
+                total_capital=symbol_allocation,
+                available_capital=symbol_available,
+                ai_capital_usage=ai_decision.capital_usage,
+                leverage=risk_tool.max_leverage,
+            )
+            if boosted_usage is not None and self._has_high_conviction(sim, ai_decision):
+                logger.info(
+                    "[%s] Ajuste automático de capital_usage para mínimo notional: %.1f%% → %.1f%%",
+                    symbol,
+                    ai_decision.capital_usage * 100,
+                    boosted_usage * 100,
+                )
+                risk_params = risk_tool.validate(
+                    direction=direction,
+                    entry_price=current_price,
+                    available_capital=symbol_available,
+                    total_capital=symbol_allocation,
+                    capital_usage=boosted_usage,
+                )
+            elif boosted_usage is not None:
+                logger.info(
+                    "[%s] Notional bajo detectado pero sin confluencia alta: "
+                    "winrate=%.1f%% conf=%.0f%% profit=%.2f%% dd=%.2f%% ruin=%.1f%%",
+                    symbol,
+                    sim.winrate * 100,
+                    ai_decision.confidence * 100,
+                    sim.expected_profit_pct,
+                    sim.max_drawdown_pct,
+                    sim.mc_ruin_probability * 100,
+                )
+
         state.add_log(
             f"Riesgo: valid={risk_params.is_valid} qty={risk_params.quantity:.4f} "
             f"capital={risk_params.capital_to_use:.2f} USDT"
@@ -218,6 +274,11 @@ class DecisionEngine:
             error_logger.error("[%s] %s", symbol, reason)
             state.add_log(reason)
             return False, reason
+        if result.get("status") == "blocked":
+            reason = f"Trade omitido: {result.get('reason', 'símbolo bloqueado')}"
+            logger.info("[%s] %s", symbol, reason)
+            state.add_log(reason)
+            return False, reason
 
         # ── 5. Persistir log completo ─────────────────────────────────────────
         self._log_execution(symbol, direction, signal, sim, ai_decision, risk_params, result)
@@ -241,6 +302,14 @@ class DecisionEngine:
         """
         from tools.simulation_tool import simulation_tool
         logger.info("[%s] [--force-ai] Consultando IA sin señal activa...", symbol)
+
+        if execution_tool.is_symbol_blocked(symbol):
+            logger.warning(
+                "[%s] [--force-ai] Omitido: %s",
+                symbol,
+                execution_tool.get_block_reason(symbol),
+            )
+            return
 
         # Determinar dirección probable por tendencia
         from analysis.trend_detector import trend_detector, Trend
@@ -293,13 +362,54 @@ class DecisionEngine:
             risk_tool.sync_params(parameters_manager.params)
             final_direction = ai_decision.direction or direction
             current_price = indicators.price
+            available_capital = portfolio_tool.available_capital
+            try:
+                from exchange.market_fetcher import market_fetcher
+                exchange_available = market_fetcher.get_usdt_available_balance()
+                if exchange_available is not None:
+                    available_capital = min(available_capital, exchange_available)
+            except Exception:
+                pass
             risk_params = risk_tool.validate(
                 direction=final_direction,
                 entry_price=current_price,
-                available_capital=portfolio_tool.available_capital,
+                available_capital=available_capital,
                 total_capital=portfolio_tool.capital,
                 capital_usage=ai_decision.capital_usage,
             )
+            if not risk_params.is_valid and "Notional" in risk_params.rejection_reason:
+                boosted_usage = self._compute_boosted_capital_usage_for_min_notional(
+                    total_capital=portfolio_tool.capital,
+                    available_capital=portfolio_tool.available_capital,
+                    ai_capital_usage=ai_decision.capital_usage,
+                    leverage=risk_tool.max_leverage,
+                )
+                fake_sim = SimulationResult(
+                    direction=final_direction,
+                    winrate=sim.winrate,
+                    expected_profit_pct=sim.expected_profit_pct,
+                    max_drawdown_pct=sim.max_drawdown_pct,
+                    sharpe_ratio=sim.sharpe_ratio,
+                    mc_median_equity=sim.mc_median_equity,
+                    mc_worst_equity=sim.mc_worst_equity,
+                    mc_ruin_probability=sim.mc_ruin_probability,
+                    recommendation=sim.recommendation,
+                    skip_reason=sim.skip_reason,
+                )
+                if boosted_usage is not None and self._has_high_conviction(fake_sim, ai_decision):
+                    logger.info(
+                        "[%s] [--force-ai] Ajuste automático de capital_usage: %.1f%% → %.1f%%",
+                        symbol,
+                        ai_decision.capital_usage * 100,
+                        boosted_usage * 100,
+                    )
+                    risk_params = risk_tool.validate(
+                        direction=final_direction,
+                        entry_price=current_price,
+                        available_capital=available_capital,
+                        total_capital=portfolio_tool.capital,
+                        capital_usage=boosted_usage,
+                    )
             if not risk_params.is_valid:
                 logger.info("[%s] [--force-ai] Riesgo rechazó: %s", symbol, risk_params.rejection_reason)
                 return
@@ -311,8 +421,47 @@ class DecisionEngine:
                 strategy="AI_FORCED",
                 dry_run=self.dry_run,
             )
+            if result is not None and result.get("status") == "blocked":
+                logger.warning(
+                    "[%s] [--force-ai] Omitido: %s",
+                    symbol,
+                    result.get("reason", "símbolo bloqueado"),
+                )
+                return
             logger.info("[%s] [--force-ai] Trade ejecutado: %s", symbol, result)
             state.add_log(f"[IA force] TRADE EJECUTADO {symbol} {final_direction} | {result}")
+
+    def _compute_boosted_capital_usage_for_min_notional(
+        self,
+        total_capital: float,
+        available_capital: float,
+        ai_capital_usage: float,
+        leverage: int,
+    ) -> Optional[float]:
+        """Calcula el capital_usage mínimo para alcanzar notional >= 100 USDT."""
+        if total_capital <= 0 or available_capital <= 0 or leverage <= 0:
+            return None
+
+        required_capital = self._min_notional_usdt / leverage
+        max_capital = min(available_capital, total_capital * risk_tool.max_capital_pct)
+        if max_capital < required_capital:
+            return None
+
+        min_usage_required = required_capital / total_capital
+        base_usage = ai_capital_usage if ai_capital_usage > 0 else risk_tool.max_capital_pct
+        boosted_usage = max(base_usage, min_usage_required)
+        return min(boosted_usage, risk_tool.max_capital_pct)
+
+    @staticmethod
+    def _has_high_conviction(sim: SimulationResult, ai_decision: AIDecision) -> bool:
+        """Filtro extra para permitir subir capital solo con señal robusta."""
+        return (
+            ai_decision.confidence >= 0.70
+            and sim.winrate >= 0.55
+            and sim.expected_profit_pct > 0
+            and sim.max_drawdown_pct <= 2.0
+            and sim.mc_ruin_probability <= 0.20
+        )
 
     # ── Hard rules algorítmicas (sin IA) ─────────────────────────────────────
 
@@ -323,6 +472,7 @@ class DecisionEngine:
         indicators: "Indicators",
         sim: "SimulationResult",
         funding_rate: float = 0.0,
+        strategy: str = "",
     ) -> "Tuple[bool, str]":
         """
         Valida las hard rules numéricas sin depender de la IA.
@@ -345,9 +495,47 @@ class DecisionEngine:
             return True, f"Ruin probability={sim.mc_ruin_probability:.1%} > 20%"
 
         # 5. Dirección opuesta a la tendencia SMA
-        if direction == "LONG" and indicators.sma20 < indicators.sma50:
+        # Excepción controlada: permitir BREAKOUT contra SMA solo si la simulación
+        # es suficientemente sólida (evita bloquear rupturas válidas de reversión).
+        breakout_countertrend_ok = (
+            strategy == "BREAKOUT"
+            and sim.winrate >= 0.56
+            and sim.expected_profit_pct > 0
+            and sim.mc_ruin_probability <= 0.18
+        )
+
+        pullback_countertrend_ok = (
+            strategy == "PULLBACK"
+            and indicators.price > indicators.sma20
+            and indicators.rsi >= 55
+            and indicators.macd_hist > 0
+            and sim.winrate >= 0.56
+            and sim.expected_profit_pct > 0
+            and sim.mc_ruin_probability <= 0.16
+        )
+
+        if (
+            direction == "LONG"
+            and indicators.sma20 < indicators.sma50
+            and not (breakout_countertrend_ok or pullback_countertrend_ok)
+        ):
             return True, f"SMA20={indicators.sma20:.2f} < SMA50={indicators.sma50:.2f} — tendencia BEARISH, no LONG"
-        if direction == "SHORT" and indicators.sma20 > indicators.sma50:
+
+        pullback_countertrend_ok = (
+            strategy == "PULLBACK"
+            and indicators.price < indicators.sma20
+            and indicators.rsi <= 52
+            and indicators.macd_hist < 0
+            and sim.winrate >= 0.56
+            and sim.expected_profit_pct > 0
+            and sim.mc_ruin_probability <= 0.16
+        )
+
+        if (
+            direction == "SHORT"
+            and indicators.sma20 > indicators.sma50
+            and not (breakout_countertrend_ok or pullback_countertrend_ok)
+        ):
             return True, f"SMA20={indicators.sma20:.2f} > SMA50={indicators.sma50:.2f} — tendencia BULLISH, no SHORT"
 
         # 6. Funding rate extremo: evita pagar caro por mantener la posición

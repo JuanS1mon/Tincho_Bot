@@ -74,6 +74,7 @@ Current agent parameters (AI-adjustable):
 - risk_per_trade:            {p.risk_per_trade:.3f}    [allowed: 0.005–0.05]
 - stop_loss:                 {p.stop_loss:.1%}      [allowed: 1%–8%]
 - take_profit:               {tp_label}      [allowed: 0%–30% | 0% = disabled]
+- profit_lock_retrace_pct:   {p.profit_lock_retrace_pct:.0%}      [allowed: 5%–40%]
 - timeframe:                 {p.timeframe}         [allowed: 1m|3m|5m|15m|30m|1h|2h|4h]
 - analysis_interval_seconds: {p.analysis_interval_seconds}s       [allowed: 180–3600]
 - total_parameter_adjustments_by_AI: {p.adjustment_count}
@@ -149,6 +150,7 @@ Return ONLY this JSON (no markdown, no explanation):
     "max_capital_per_trade": float,
     "stop_loss": float,
     "take_profit": float,
+    "profit_lock_retrace_pct": float,
     "timeframe": "string",
     "analysis_interval_seconds": int
   }
@@ -190,6 +192,7 @@ def build_market_overview_prompt(
         params_block = (
             f"Current parameters: leverage={p.leverage}x | "
             f"sl={p.stop_loss:.1%} | tp={tp_label} | "
+            f"pl_retrace={p.profit_lock_retrace_pct:.0%} | "
             f"max_cap={p.max_capital_per_trade:.0%} | "
             f"risk={p.risk_per_trade:.1%} | tf={p.timeframe} | "
             f"adjustments_by_AI={p.adjustment_count} | last_reason={p.last_adjustment_reason or 'none'}"
@@ -224,6 +227,7 @@ Return ONLY this JSON (no markdown, no explanation):
     "max_capital_per_trade": float,
     "stop_loss": float,
     "take_profit": float,
+        "profit_lock_retrace_pct": float,
     "timeframe": "string"
   }}
 }}

@@ -14,6 +14,11 @@ router = APIRouter()
 
 _ACTIVATE_WORDS = ["activar", "prender", "arrancar", "enciende", "enciendete", "start", "activate", "arranca"]
 _DEACTIVATE_WORDS = ["apaga", "apagar", "stop", "detener", "desactivar", "apágate", "parar", "para"]
+_SYMBOL_EXCLUDE = {
+    "USDT", "USD", "STOP", "START", "BUY", "SELL", "TP", "SL", "PNL", "AI", "IA",
+    "CON", "EN", "DE", "LA", "EL", "UNA", "NO", "Y", "A", "ME", "AL", "SIN", "LOS", "LAS",
+    "ACTIVAR", "ARRANCAR", "OPERAR", "COMPRAR", "ENTRAR", "MONEDA", "MONTO",
+}
 
 
 def _normalize(text: str) -> str:
@@ -33,6 +38,26 @@ def _extract_amount(text: str) -> float | None:
             return float(m.group(1).replace(",", "."))
         except ValueError:
             pass
+    return None
+
+
+def _extract_symbol(text: str) -> str | None:
+    caps_tokens = _re.findall(r"\b([A-Z]{2,12})\b", text)
+    for tok in caps_tokens:
+        base = tok[:-4] if tok.endswith("USDT") else tok
+        if base not in _SYMBOL_EXCLUDE and len(base) >= 2:
+            return base + "USDT"
+
+    lower_match = _re.search(
+        r"(?:moneda|symbol|simbolo|símbolo|operar|comprar|entrar|opera|trade|compr[aá]|entr[aá])"
+        r"(?:\s+(?:con|en|a|el|la|de))?\s+([a-zA-Z]{2,12})",
+        text,
+        _re.IGNORECASE,
+    )
+    if lower_match:
+        candidate = lower_match.group(1).upper()
+        if candidate not in _SYMBOL_EXCLUDE:
+            return candidate if candidate.endswith("USDT") else candidate + "USDT"
     return None
 
 
@@ -85,6 +110,7 @@ def _build_marquitos_context() -> str:
 @router.post("/marquitos/chat", summary="Chat con Marquitos — scalper IA")
 async def chat_with_marquitos(req: MarquitosChatRequest) -> Dict[str, Any]:
     from agent.marquitos_agent import marquitos_agent
+    from agent.marquitos_agent import DEFAULT_TRADE_AMOUNT_USDT
 
     # ── Intentar obtener referencia al runner ─────────────────────────────────
     try:
@@ -98,7 +124,14 @@ async def chat_with_marquitos(req: MarquitosChatRequest) -> Dict[str, Any]:
     if _contains_any(msg, _ACTIVATE_WORDS):
         if _runner is not None:
             _runner.start_marquitos()
-            return {"reply": "🚀 ¡Listo! Estoy encendido y listo para scalpear. Decime con cuánto capital opero (ej: '50 USDT')."}
+            return {
+                "reply": (
+                    "🚀 ¡Marquitos online! Para arrancar decime:\n"
+                    "1) qué moneda querés (ej: BTCUSDT o PEPE)\n"
+                    "2) cuánto monto para esa moneda (ej: 10 USDT)\n"
+                    f"Si no indicás monto, uso {DEFAULT_TRADE_AMOUNT_USDT:.0f} USDT por defecto."
+                )
+            }
         return {"reply": "No puedo arrancar: el runner no está inicializado. ¿Está corriendo el bot?"}
 
     # ── 2. Comando: APAGAR ────────────────────────────────────────────────────
@@ -110,31 +143,73 @@ async def chat_with_marquitos(req: MarquitosChatRequest) -> Dict[str, Any]:
             return {"reply": f"😴 Me apagué. Capital final: {capital_final:.2f} USDT | PnL sesión: {pnl:+.2f} USDT. ¡Hasta la próxima!"}
         return {"reply": "No puedo apagarme: no encuentro el runner."}
 
-    # ── 3. Si está esperando capital → detectar número ────────────────────────
-    if marquitos_agent.awaiting_capital:
+    # ── 3. Onboarding: pedir moneda + monto ───────────────────────────────────
+    if marquitos_agent.awaiting_symbol or marquitos_agent.awaiting_capital:
+        symbol = _extract_symbol(msg)
         amount = _extract_amount(msg)
-        if amount and 1.0 <= amount <= 10000.0:
-            marquitos_agent.set_capital_from_user(amount)
-            return {"reply": f"💰 ¡Perfecto! Voy a operar con {amount:.2f} USDT. Escaneando el mercado cada 5 segundos... ¡A romper el mercado! 🔥"}
-        return {"reply": "💬 Marquitos está activo pero esperando capital. Decime con cuánto opero (ej: '50', '100 USDT')."}
+
+        if symbol and marquitos_agent.awaiting_symbol:
+            marquitos_agent.set_symbol_from_user(symbol)
+
+        if amount is not None:
+            if 1.0 <= amount <= 10000.0:
+                marquitos_agent.set_capital_from_user(amount)
+            else:
+                return {"reply": "⚠️ El monto debe estar entre 1 y 10000 USDT."}
+
+        if not marquitos_agent.awaiting_symbol and marquitos_agent.awaiting_capital:
+            marquitos_agent.set_capital_from_user(DEFAULT_TRADE_AMOUNT_USDT)
+            amount = DEFAULT_TRADE_AMOUNT_USDT
+
+        if marquitos_agent.awaiting_symbol:
+            return {
+                "reply": (
+                    "💬 Decime la moneda que querés operar primero "
+                    "(ej: BTCUSDT, ETH o PEPE)."
+                )
+            }
+
+        if marquitos_agent.awaiting_capital:
+            return {
+                "reply": (
+                    "💬 Perfecto, ahora decime el monto para esa moneda "
+                    "(si querés, podés dejar 10 USDT por defecto)."
+                )
+            }
+
+        chosen_symbol = marquitos_agent.preferred_symbol
+        if not chosen_symbol:
+            return {"reply": "No pude detectar la moneda. Probá con algo como 'PEPE' o 'BTCUSDT'."}
+
+        side = "SHORT" if _contains_any(msg, ["short", "vender", "venta", "bajar", "cae", "a la baja"]) else "LONG"
+        result = marquitos_agent.force_trade(chosen_symbol, side=side)
+        if result["ok"]:
+            side_label = "🟢 LONG" if side == "LONG" else "🔴 SHORT"
+            return {
+                "reply": (
+                    f"{side_label} **¡Trade en {chosen_symbol}!**\n"
+                    f"📍 Entrada: `{result['price']:.8g}` USDT\n"
+                    f"💰 Monto asignado: {result['capital']:.2f} USDT\n"
+                    f"✅ TP: `{result['tp']:.8g}` (+0.8%)\n"
+                    f"🛑 SL: `{result['sl']:.8g}` (-0.3%)\n"
+                    "Objetivo: ganancia rápida cuando el mercado esté calmo y limpio."
+                )
+            }
+        return {"reply": f"❌ {result['error']}"}
 
     # ── 4. Detectar "operar/comprar [SYMBOL]" → ejecución real ───────────────
     _BUY_WORDS = ["operar", "comprar", "entra", "entrar", "opera", "trade", "comprá",
-                  "metele", "metés", "entrá", "compramos"]
-    if _contains_any(msg, _BUY_WORDS):
+                  "metele", "metés", "entrá", "compramos", "long"]
+    _SELL_WORDS = ["vender", "venta", "short", "ponete short", "a la baja", "baja"]
+    if _contains_any(msg, _BUY_WORDS) or _contains_any(msg, _SELL_WORDS):
         import re as _re
-        # Tokens que NO son símbolos de monedas
-        _EXCLUDE = {"USDT", "USD", "STOP", "START", "BUY", "SELL",
-                    "TP", "SL", "PNL", "AI", "IA", "CON", "EN", "DE", "LA", "EL",
-                    "UNA", "NO", "Y", "A", "ME", "AL", "SIN", "LOS", "LAS"}
-
         symbol: Optional[str] = None  # type: ignore[name-defined]
 
         # Prioridad 1: token en MAYÚSCULAS explícito (PEPE, PEPEUSDT, SOL…)
         caps_tokens = _re.findall(r'\b([A-Z]{2,12})\b', req.message)
         for tok in caps_tokens:
             base = tok[:-4] if tok.endswith("USDT") else tok
-            if base not in _EXCLUDE and len(base) >= 2:
+            if base not in _SYMBOL_EXCLUDE and len(base) >= 2:
                 symbol = base + "USDT"
                 break
 
@@ -148,14 +223,16 @@ async def chat_with_marquitos(req: MarquitosChatRequest) -> Dict[str, Any]:
             )
             if after:
                 candidate = after.group(1).upper()
-                if candidate not in _EXCLUDE:
+                if candidate not in _SYMBOL_EXCLUDE:
                     symbol = candidate if candidate.endswith("USDT") else candidate + "USDT"
 
         if symbol:
-            result = marquitos_agent.force_buy(symbol)
+            side = "SHORT" if _contains_any(msg, _SELL_WORDS) else "LONG"
+            result = marquitos_agent.force_trade(symbol, side=side)
             if result["ok"]:
+                side_label = "🟢 LONG" if side == "LONG" else "🔴 SHORT"
                 return {"reply": (
-                    f"🟢 **¡Compré {symbol}!**\n"
+                    f"{side_label} **¡Trade en {symbol}!**\n"
                     f"📍 Entrada: `{result['price']:.8g}` USDT\n"
                     f"💰 Capital: {result['capital']:.2f} USDT ×40x\n"
                     f"✅ TP: `{result['tp']:.8g}` (+0.8%)\n"

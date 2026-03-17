@@ -47,6 +47,7 @@ class DynamicParams:
     risk_per_trade: float         = field(default_factory=lambda: settings.risk_per_trade)
     stop_loss: float              = field(default_factory=lambda: settings.stop_loss)
     take_profit: float            = field(default_factory=lambda: settings.take_profit)
+    profit_lock_retrace_pct: float = field(default_factory=lambda: settings.profit_lock_retrace_pct)
     timeframe: str                = field(default_factory=lambda: settings.timeframe)
     analysis_interval_seconds: int = field(default_factory=lambda: settings.analysis_interval_seconds)
     sma20_proximity_pct: float    = 0.05   # Máx distancia precio-SMA20 para pullback
@@ -170,7 +171,7 @@ class ParametersManager:
         tp_label = "OFF" if p.take_profit <= 0 else f"{p.take_profit:.1%}"
         return (
             f"leverage={p.leverage}x | max_cap={p.max_capital_per_trade:.0%} | "
-            f"SL={p.stop_loss:.1%} TP={tp_label} | "
+            f"SL={p.stop_loss:.1%} TP={tp_label} | PL_retrace={p.profit_lock_retrace_pct:.0%} | "
             f"tf={p.timeframe} | interval={p.analysis_interval_seconds}s | "
             f"ajustes_IA={p.adjustment_count}"
         )

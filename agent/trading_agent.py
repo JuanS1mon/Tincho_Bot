@@ -29,7 +29,9 @@ from agent.state_manager import AgentState, MarketSnapshot as MarketSnapshotStat
 from agent.parameters_manager import parameters_manager
 from storage.state_repository import state_repository
 from tools.portfolio_tool import portfolio_tool, Position
+from tools.capital_optimizer_tool import capital_optimizer
 from exchange.order_manager import order_manager
+from tools.risk_tool import risk_tool
 from storage.trade_repository import trade_repository
 from config.settings import settings
 from config.logger import trading_logger as logger, error_logger
@@ -143,6 +145,11 @@ class TradingAgent:
         self._recover_open_positions_from_exchange()
         self._ensure_position_protection()
         self._sync_closed_positions()
+
+        # ── Paso 0.5: Optimizar distribución de capital entre posiciones ──────
+        realloc_rec = capital_optimizer.analyze_positions(portfolio_tool.positions)
+        if realloc_rec.should_reallocate:
+            self._handle_capital_reallocation(realloc_rec)
 
         all_market_data: Dict[str, dict] = {}
         signals: Dict[str, TradingSignal] = {}
@@ -274,7 +281,6 @@ class TradingAgent:
             current_price = pos.entry_price
             # Intentar precio actual del exchange
             try:
-                from tools.order_manager import order_manager
                 ticker = order_manager._client.safe_call(
                     order_manager._client.client.futures_symbol_ticker,
                     symbol=sym,
@@ -488,7 +494,8 @@ class TradingAgent:
         if current_price is not None:
             lock_hit, pnl_now, peak_pnl, floor_pnl = portfolio_tool.profit_lock_state(symbol, current_price)
             if lock_hit:
-                strategy = f"PROFIT_LOCK_RETRACE_{int(portfolio_tool.PROFIT_LOCK_RETRACE_PCT * 100)}"
+                retrace_pct = portfolio_tool.get_profit_lock_retrace_pct()
+                strategy = f"PROFIT_LOCK_RETRACE_{int(retrace_pct * 100)}"
                 outcome = "🔒 PROFIT LOCK"
 
                 if not self.dry_run:
@@ -576,17 +583,33 @@ class TradingAgent:
                 except Exception:
                     return
 
-            # Determinar si fue SL o TP según el precio de salida
+            # Determinar si fue SL o TP según el precio de salida.
+            # Si no coincide con ninguno, clasificar como cierre externo/manual.
             if pos.direction == "LONG":
                 hit_sl = exit_price <= pos.stop_loss * 1.005  # pequeño margen de slippage
+                hit_tp = pos.take_profit > 0 and exit_price >= pos.take_profit * 0.995
             else:
                 hit_sl = exit_price >= pos.stop_loss * 0.995
+                hit_tp = pos.take_profit > 0 and exit_price <= pos.take_profit * 1.005
+
             if pos.take_profit <= 0:
                 strategy = "MANUAL_EXIT"
                 outcome = "ℹ️ CIERRE"
+            elif hit_sl and not hit_tp:
+                strategy = "SL_HIT"
+                outcome = "❌ SL"
+            elif hit_tp and not hit_sl:
+                strategy = "TP_HIT"
+                outcome = "✅ TP"
+            elif hit_sl and hit_tp:
+                # Caso raro por tolerancias/micro-rango: elegir el trigger más cercano.
+                sl_dist = abs(exit_price - pos.stop_loss)
+                tp_dist = abs(exit_price - pos.take_profit)
+                strategy = "SL_HIT" if sl_dist <= tp_dist else "TP_HIT"
+                outcome = "❌ SL" if strategy == "SL_HIT" else "✅ TP"
             else:
-                strategy = "SL_HIT" if hit_sl else "TP_HIT"
-                outcome = "❌ SL" if hit_sl else "✅ TP"
+                strategy = "MANUAL_EXIT"
+                outcome = "ℹ️ CIERRE"
 
         self._finalize_closed_position(symbol, exit_price, strategy, outcome)
 
@@ -623,6 +646,132 @@ class TradingAgent:
         })
 
     # ── Análisis de un símbolo ────────────────────────────────────────────────
+
+    def _handle_capital_reallocation(self, realloc_rec) -> None:
+        """
+                Ejecuta realocación recomendada:
+                    1) Cierra la peor posición.
+                    2) Aumenta exposición en la mejor (scale-in).
+                    3) Refresca SL/TP/Trailing en la mejor con la nueva cantidad.
+        """
+        worst_sym = realloc_rec.worst_symbol
+        best_sym = realloc_rec.best_symbol
+        capital_to_move = realloc_rec.capital_to_move
+        
+        logger.warning(
+            "💰 [REALLOCATION] Cerrando %s (%.2f USDT) para reinvertir en %s",
+            worst_sym, capital_to_move, best_sym
+        )
+        
+        worst_pos = portfolio_tool.positions.get(worst_sym)
+        if worst_pos is None:
+            logger.error("❌ Posición %s no encontrada para reallocación", worst_sym)
+            return
+        
+        # Obtener precio actual de la posición peor
+        try:
+            ticker = order_manager._client.safe_call(
+                order_manager._client.client.futures_symbol_ticker,
+                symbol=worst_sym,
+            )
+            exit_price = float(ticker["price"])
+        except Exception as e:
+            logger.error("❌ Error obteniendo precio de %s: %s", worst_sym, e)
+            exit_price = worst_pos.current_price
+        
+        # Cerrar en exchange (live) antes de cerrar localmente.
+        if not self.dry_run:
+            try:
+                close_side = "BUY" if worst_pos.direction == "LONG" else "SELL"
+                order_manager.close_position(worst_sym, close_side, worst_pos.quantity)
+            except Exception as e:
+                logger.error("❌ Error cerrando %s en exchange: %s", worst_sym, e)
+                return
+
+        # Cerrar la posición local y persistir trade
+        self._finalize_closed_position(
+            worst_sym, exit_price, 
+            strategy="CAPITAL_REALLOC", 
+            outcome="🔄 REALLOC"
+        )
+
+        # Aumentar exposición en la mejor posición (si sigue abierta).
+        best_pos = portfolio_tool.positions.get(best_sym)
+        if best_pos is None:
+            logger.warning("⚠️ No hay posición abierta en %s para scale-in", best_sym)
+            return
+
+        if capital_to_move <= 0:
+            logger.warning("⚠️ Capital a mover inválido: %.4f", capital_to_move)
+            return
+
+        try:
+            best_ticker = order_manager._client.safe_call(
+                order_manager._client.client.futures_symbol_ticker,
+                symbol=best_sym,
+            )
+            best_price = float(best_ticker["price"])
+        except Exception as e:
+            logger.error("❌ Error obteniendo precio de %s para scale-in: %s", best_sym, e)
+            return
+
+        if best_price <= 0:
+            logger.warning("⚠️ Precio inválido para %s: %.6f", best_sym, best_price)
+            return
+
+        add_quantity = (capital_to_move * settings.leverage) / best_price
+        if add_quantity <= 0:
+            logger.warning("⚠️ Quantity adicional inválida para %s", best_sym)
+            return
+
+        fill_price = best_price
+        if not self.dry_run:
+            try:
+                if best_pos.direction == "LONG":
+                    add_order = order_manager.open_long(best_sym, add_quantity)
+                else:
+                    add_order = order_manager.open_short(best_sym, add_quantity)
+
+                fill_price = float(add_order.get("avgPrice", 0) or add_order.get("price", 0) or best_price)
+            except Exception as e:
+                logger.error("❌ Error haciendo scale-in en %s: %s", best_sym, e)
+                return
+
+        # Actualizar posición local con promedio ponderado.
+        prev_qty = best_pos.quantity
+        prev_entry = best_pos.entry_price
+        new_qty = prev_qty + add_quantity
+        if new_qty <= 0:
+            logger.warning("⚠️ Nueva cantidad inválida en %s", best_sym)
+            return
+
+        best_pos.entry_price = ((prev_entry * prev_qty) + (fill_price * add_quantity)) / new_qty
+        best_pos.quantity = new_qty
+        best_pos.capital_used += capital_to_move
+
+        # Refrescar protecciones para la nueva cantidad total.
+        if not self.dry_run:
+            try:
+                order_manager.refresh_protection_orders(
+                    symbol=best_sym,
+                    direction=best_pos.direction,
+                    stop_loss_price=best_pos.stop_loss,
+                    take_profit_price=best_pos.take_profit,
+                    quantity=best_pos.quantity,
+                    trailing_callback_pct=risk_tool.trailing_callback_pct,
+                )
+            except Exception as e:
+                logger.error("❌ Error refrescando protecciones en %s: %s", best_sym, e)
+
+        logger.info(
+            "🔼 [REALLOCATION] Scale-in %s | +qty=%.6f @ %.6f | qty_total=%.6f | entry_prom=%.6f",
+            best_sym, add_quantity, fill_price, best_pos.quantity, best_pos.entry_price,
+        )
+        
+        # Log de la reallocación
+        self.state.add_log(
+            f"💰 Capital reallocado: {worst_sym} ({realloc_rec.pnl_divergence:.2f}% div) → {best_sym} | +{capital_to_move:.2f} USDT"
+        )
 
     def _analyze_symbol(self, symbol: str, all_market_data: dict) -> Optional[dict]:
         """
@@ -779,9 +928,9 @@ class TradingAgent:
 
     def _apply_mode(self, mode: str, reason: str) -> None:
         presets = {
-            "tryhard": {"leverage": 20, "stop_loss": 0.04, "take_profit": 0.00, "max_capital_per_trade": 0.50, "risk_per_trade": 0.03},
-            "chill":   {"leverage": 10, "stop_loss": 0.03, "take_profit": 0.00, "max_capital_per_trade": 0.35, "risk_per_trade": 0.02},
-            "putita":  {"leverage": 5,  "stop_loss": 0.015, "take_profit": 0.00, "max_capital_per_trade": 0.15, "risk_per_trade": 0.005},
+            "tryhard": {"leverage": 20, "stop_loss": 0.04, "max_capital_per_trade": 0.50, "risk_per_trade": 0.03},
+            "chill":   {"leverage": 10, "stop_loss": 0.03, "max_capital_per_trade": 0.35, "risk_per_trade": 0.02},
+            "putita":  {"leverage": 5,  "stop_loss": 0.015, "max_capital_per_trade": 0.15, "risk_per_trade": 0.005},
         }
         if mode not in presets:
             return

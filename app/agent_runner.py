@@ -72,6 +72,7 @@ class AgentRunner:
         if self._marquitos_active:
             logger.info("Marquitos ya está activo.")
             return
+        marquitos_agent.prepare_new_session()
         logger.info("Activando Marquitos (scalper, dry_run=%s)...", self.dry_run)
         self._marquitos_thread = threading.Thread(
             target=marquitos_agent.start,

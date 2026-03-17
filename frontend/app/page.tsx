@@ -1,9 +1,8 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import dynamic from "next/dynamic";
+import MarquitosChat from "./MarquitosChat";
 import { useDraggableFloat } from "./hooks/useDraggableFloat";
-const MarquitosChat = dynamic(() => import("./MarquitosChat"), { ssr: false });
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -183,6 +182,160 @@ function RsiBar({ rsi }: { rsi: number }) {
   );
 }
 
+function TradesPnlChart({ trades }: { trades: Trade[] }) {
+  if (trades.length === 0) return null;
+
+  const sorted = [...trades].sort((a, b) => a.timestamp - b.timestamp);
+  let running = 0;
+  const points = sorted.map((t, i) => {
+    running += t.pnl;
+    return {
+      xIndex: i,
+      pnl: t.pnl,
+      cumulative: running,
+      symbol: t.symbol,
+      direction: t.direction,
+    };
+  });
+
+  const minY = Math.min(0, ...points.map(p => p.cumulative));
+  const maxY = Math.max(0, ...points.map(p => p.cumulative));
+  const yRange = Math.max(0.0001, maxY - minY);
+
+  const width = 700;
+  const height = 210;
+  const leftPad = 46;
+  const rightPad = 16;
+  const topPad = 10;
+  const bottomPad = 28;
+  const innerWidth = width - leftPad - rightPad;
+  const innerHeight = height - topPad - bottomPad;
+
+  const toX = (i: number) => {
+    if (points.length <= 1) return leftPad + innerWidth / 2;
+    return leftPad + (i / (points.length - 1)) * innerWidth;
+  };
+  const toY = (value: number) => topPad + ((maxY - value) / yRange) * innerHeight;
+
+  const linePoints = points.map((p) => `${toX(p.xIndex)},${toY(p.cumulative)}`).join(" ");
+  const lastPoint = points[points.length - 1];
+  const firstPoint = points[0];
+  const zeroY = toY(0);
+
+  const yTickCount = 5;
+  const yTicks = Array.from({ length: yTickCount }, (_, i) => maxY - (i * yRange) / (yTickCount - 1));
+
+  const xTickCount = Math.min(6, points.length);
+  const xTickIndexes =
+    points.length <= 1
+      ? [0]
+      : Array.from({ length: xTickCount }, (_, i) => Math.round((i * (points.length - 1)) / (xTickCount - 1)));
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-3 text-xs">
+        <span className="rounded-full border border-[var(--border)] px-2.5 py-1 text-[var(--muted)]">
+          Trades: <span className="font-mono text-[var(--text)]">{points.length}</span>
+        </span>
+        <span className="rounded-full border border-[var(--border)] px-2.5 py-1 text-[var(--muted)]">
+          Inicio: <span className="font-mono text-[var(--text)]">{firstPoint.symbol}</span>
+        </span>
+        <span className="rounded-full border border-[var(--border)] px-2.5 py-1 text-[var(--muted)]">
+          Cierre: <span className="font-mono text-[var(--text)]">{lastPoint.symbol}</span>
+        </span>
+        <span className={`rounded-full border px-2.5 py-1 ${lastPoint.cumulative >= 0 ? "border-green-500/40 text-green-300" : "border-red-500/40 text-red-300"}`}>
+          PnL acum.: {lastPoint.cumulative >= 0 ? "+" : ""}{lastPoint.cumulative.toFixed(4)} USDT
+        </span>
+      </div>
+
+      <div className="rounded-lg border border-[var(--border)] bg-black/15 p-2">
+        <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-52">
+          {xTickIndexes.map((idx, i) => (
+            <line
+              key={`grid-x-${idx}-${i}`}
+              x1={toX(idx)}
+              y1={topPad}
+              x2={toX(idx)}
+              y2={height - bottomPad}
+              stroke="currentColor"
+              className="text-slate-500/20"
+              strokeDasharray="3 4"
+            />
+          ))}
+
+          {yTicks.map((tick, i) => (
+            <line
+              key={`grid-y-${i}`}
+              x1={leftPad}
+              y1={toY(tick)}
+              x2={width - rightPad}
+              y2={toY(tick)}
+              stroke="currentColor"
+              className="text-slate-500/20"
+              strokeDasharray="3 4"
+            />
+          ))}
+
+          <line x1={leftPad} y1={zeroY} x2={width - rightPad} y2={zeroY} stroke="currentColor" className="text-slate-500/40" strokeDasharray="4 4" />
+          <line x1={leftPad} y1={topPad} x2={leftPad} y2={height - bottomPad} stroke="currentColor" className="text-slate-400/40" />
+          <line x1={leftPad} y1={height - bottomPad} x2={width - rightPad} y2={height - bottomPad} stroke="currentColor" className="text-slate-400/40" />
+
+          <polyline fill="none" stroke="currentColor" className={lastPoint.cumulative >= 0 ? "text-green-400" : "text-red-400"} strokeWidth="2.5" points={linePoints} />
+
+          {points.map((p) => (
+            <circle
+              key={`${p.xIndex}-${p.symbol}-${p.direction}`}
+              cx={toX(p.xIndex)}
+              cy={toY(p.cumulative)}
+              r="3"
+              className={p.pnl >= 0 ? "fill-green-400" : "fill-red-400"}
+            >
+              <title>{`${p.symbol} · ${p.direction} · ${(p.pnl >= 0 ? "+" : "") + p.pnl.toFixed(4)} USDT · acum ${(p.cumulative >= 0 ? "+" : "") + p.cumulative.toFixed(4)} USDT`}</title>
+            </circle>
+          ))}
+
+          {yTicks.map((tick, i) => (
+            <text
+              key={`label-y-${i}`}
+              x={leftPad - 6}
+              y={toY(tick) + 3}
+              textAnchor="end"
+              className="fill-slate-400"
+              fontSize="10"
+            >
+              {tick.toFixed(2)}
+            </text>
+          ))}
+
+          {xTickIndexes.map((idx, i) => (
+            <text
+              key={`label-x-${idx}-${i}`}
+              x={toX(idx)}
+              y={height - 6}
+              textAnchor="middle"
+              className="fill-slate-400"
+              fontSize="10"
+            >
+              T{idx + 1}
+            </text>
+          ))}
+
+          <text x={10} y={height / 2} transform={`rotate(-90 10 ${height / 2})`} className="fill-slate-400" fontSize="10">
+            PnL acumulado (USDT)
+          </text>
+          <text x={(leftPad + width - rightPad) / 2} y={height - 16} textAnchor="middle" className="fill-slate-400" fontSize="10">
+            Secuencia de trades
+          </text>
+        </svg>
+      </div>
+
+      <div className="text-xs text-[var(--muted)]">
+        Línea de PnL acumulado en orden temporal (de más viejo a más reciente).
+      </div>
+    </div>
+  );
+}
+
 // ── Offline state ─────────────────────────────────────────────────────────────
 
 function OfflineBanner() {
@@ -236,6 +389,7 @@ function RecoveredPositionsBanner({ positions }: { positions: RecoveredPosition[
 
 function TradingAlert({ count, positions }: { count: number; positions: Record<string, Position> }) {
   const symbols = Object.keys(positions).join(", ");
+  const totalCapitalUsed = Object.values(positions).reduce((sum, p) => sum + (p.capital_used ?? 0), 0);
   return (
     <div className="rounded-2xl border-2 border-green-500/60 bg-green-500/10 shadow-lg shadow-green-500/20 overflow-hidden">
       <div className="flex flex-col sm:flex-row items-center gap-6 p-8">
@@ -250,6 +404,20 @@ function TradingAlert({ count, positions }: { count: number; positions: Record<s
             {count} posición{count !== 1 ? "es" : ""} activa{count !== 1 ? "s" : ""}
           </p>
           <p className="text-lg text-green-300/60 font-mono mt-1 truncate">{symbols}</p>
+          <p className="text-base text-green-200/90 font-semibold mt-2">
+            Capital en juego: <span className="font-mono">{totalCapitalUsed.toFixed(2)} USDT</span>
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {Object.entries(positions).map(([sym, pos]) => (
+              <span
+                key={sym}
+                className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md border border-green-500/30 bg-black/20 text-[11px] text-green-200"
+              >
+                <span className="font-semibold">{sym.replace("USDT", "")}</span>
+                <span className="font-mono">{(pos.capital_used ?? 0).toFixed(2)} USDT</span>
+              </span>
+            ))}
+          </div>
         </div>
       </div>
     </div>
@@ -277,6 +445,44 @@ function NoSignalAlert({ reasons }: { reasons: { symbol: string; reason: string 
               </p>
             ))}
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AnalyzingAlert({
+  signals,
+  cycle,
+}: {
+  signals: { symbol: string; signal: string; reason: string }[];
+  cycle?: number;
+}) {
+  return (
+    <div className="rounded-2xl border-2 border-blue-500/50 bg-blue-500/8 shadow-lg shadow-blue-500/10 overflow-hidden">
+      <div className="flex flex-col sm:flex-row items-center gap-6 p-8">
+        <div className="flex-shrink-0">
+          <img src="/no-trading.gif" alt="Analizando mercado" className="h-40 w-40 rounded-2xl object-cover shadow-md" />
+        </div>
+        <div className="flex-1 min-w-0 text-center sm:text-left">
+          <span className="inline-flex items-center gap-2 px-5 py-2 rounded-full text-xl font-black bg-blue-500/15 text-blue-300 border-2 border-blue-500/40 mb-3 animate-pulse">
+            🧠 ANALIZANDO
+          </span>
+          <p className="text-2xl font-bold text-blue-300/85 mt-2">
+            Buscando confirmación antes de entrar
+          </p>
+          <p className="text-sm text-blue-200/60 mt-1">
+            {cycle ? `Ciclo #${cycle} en progreso` : "Esperando mejor confluencia"}
+          </p>
+          {signals.length > 0 && (
+            <div className="mt-3 space-y-1.5">
+              {signals.map(({ symbol, signal, reason }) => (
+                <p key={symbol} className="text-base text-blue-200/65 leading-snug">
+                  <span className="text-blue-300/95 font-semibold">{symbol}:</span> {signal} · {reason}
+                </p>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -517,7 +723,10 @@ function Tincho2Chat({
   const inputRef = useRef<HTMLInputElement>(null);
   
   // Draggable float for Tincho2
-  const tincho2Float = useDraggableFloat<HTMLButtonElement>("float_tincho2", { x: typeof window !== "undefined" ? window.innerWidth - 100 : 0, y: typeof window !== "undefined" ? window.innerHeight - 200 : 0 });
+  const tincho2Float = useDraggableFloat<HTMLButtonElement>("float_tincho2", ({ width, height }) => ({
+    x: width - 100,
+    y: height - 200,
+  }));
 
   // Scroll al último mensaje
   useEffect(() => {
@@ -746,6 +955,7 @@ export default function Dashboard() {
   const [showBombarda, setShowBombarda] = useState(false);
   const [bombarding, setBombarding] = useState(false);
   const [bombardaResult, setBombardaResult] = useState<BombardaResult | null>(null);
+  const [tradeView, setTradeView] = useState<"table" | "chart">("table");
   const [showAiChat, setShowAiChat] = useState(false);
   const [showMarquitos, setShowMarquitos] = useState(false);
   const [marquitosActive, setMarquitosActive] = useState(false);
@@ -770,6 +980,19 @@ export default function Dashboard() {
     } | null;
   } | null>(null);
   const [params, setParams] = useState<any | null>(null);
+
+  const bullishFloat = useDraggableFloat<HTMLButtonElement>("float_bullish", ({ width, height }) => ({
+    x: width - 100,
+    y: height - 200,
+  }));
+  const bombardaFloat = useDraggableFloat<HTMLButtonElement>("float_bombarda", ({ width, height }) => ({
+    x: width - 140,
+    y: height - 200,
+  }));
+  const marquitosFloat = useDraggableFloat<HTMLButtonElement>("float_marquitos", ({ height }) => ({
+    x: 20,
+    y: height - 200,
+  }));
 
   const refresh = useCallback(async () => {
     const [p, m, a, t] = await Promise.all([
@@ -830,6 +1053,17 @@ export default function Dashboard() {
   const noSignalReasons = Object.entries(signals)
     .filter(([, s]) => s.signal === "NO_SIGNAL")
     .map(([symbol, s]) => ({ symbol, reason: s.reason }));
+  const analysisSignals = Object.entries(signals)
+    .filter(([, s]) => s.signal !== "NO_SIGNAL")
+    .map(([symbol, s]) => ({ symbol, signal: s.signal, reason: s.reason }));
+
+  const estimatedEntryCapital = (() => {
+    if (!port || !params) return 0;
+    const maxCapitalPct = Number(params.max_capital_per_trade ?? 0);
+    if (!Number.isFinite(maxCapitalPct) || maxCapitalPct <= 0) return 0;
+    const capitalByRule = (port.capital ?? 0) * maxCapitalPct;
+    return Math.max(0, Math.min(port.available_capital ?? 0, capitalByRule));
+  })();
 
   async function handleBombarda() {
     setBombarding(true);
@@ -1094,6 +1328,9 @@ export default function Dashboard() {
         {allNoSignal && (
           <NoSignalAlert reasons={noSignalReasons} />
         )}
+        {!isTrading && !allNoSignal && online && (
+          <AnalyzingAlert signals={analysisSignals} cycle={agentStatus?.cycle} />
+        )}
 
         {/* Portfolio Stats */}
         {port && (() => {
@@ -1241,9 +1478,9 @@ export default function Dashboard() {
                     </div>
 
                     {/* Capital */}
-                    <div className="flex justify-between text-[10px] text-[var(--muted)] border-t border-[var(--border)] pt-2">
-                      <span>Capital invertido</span>
-                      <span className="font-mono font-semibold text-[var(--text)]">{pos.capital_used.toFixed(2)} USDT</span>
+                    <div className="border-t border-[var(--border)] pt-2 space-y-1">
+                      <div className="text-[10px] text-[var(--muted)]">Entrada ejecutada con</div>
+                      <div className="text-sm font-mono font-bold text-cyan-300">{pos.capital_used.toFixed(2)} USDT</div>
                     </div>
                   </div>
                 );
@@ -1285,6 +1522,12 @@ export default function Dashboard() {
                           <span className="text-sm text-[var(--muted)]">Señal actual</span>
                           <SignalBadge signal={sig.signal} />
                         </div>
+                        {estimatedEntryCapital > 0 && params && (
+                          <div className="mb-2 rounded-lg border border-cyan-500/25 bg-cyan-500/10 px-2.5 py-1.5 text-xs text-cyan-200">
+                            Capital objetivo por entrada: <span className="font-mono font-semibold">{estimatedEntryCapital.toFixed(2)} USDT</span>
+                            <span className="opacity-75"> · max_cap {(Number(params.max_capital_per_trade) * 100).toFixed(1)}% · riesgo {(Number(params.risk_per_trade) * 100).toFixed(2)}%</span>
+                          </div>
+                        )}
                         {sig.signal !== "NO_SIGNAL" && (
                           <div className="text-sm text-[var(--muted)] mt-1 leading-relaxed">
                             <span className="text-[var(--text)] font-medium">{sig.strategy}</span> · confianza {(sig.confidence * 100).toFixed(0)}%
@@ -1303,41 +1546,60 @@ export default function Dashboard() {
         {/* Trade History */}
         {trades.length > 0 && (
           <Card title="Últimos trades">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm lg:text-base">
-                <thead>
-                  <tr className="text-left text-xs text-[var(--muted)] border-b border-[var(--border)]">
-                    <th className="pb-2 pr-4">Par</th>
-                    <th className="pb-2 pr-4">Dir.</th>
-                    <th className="pb-2 pr-4">Entrada</th>
-                    <th className="pb-2 pr-4">Salida</th>
-                    <th className="pb-2 pr-4">PnL</th>
-                    <th className="pb-2 pr-4">Estrategia</th>
-                    <th className="pb-2">Duración</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {trades.map((t, i) => (
-                    <tr key={i} className="border-b border-[var(--border)]/50 hover:bg-white/[0.02]">
-                      <td className="py-2 pr-4 font-semibold">{t.symbol}</td>
-                      <td className="py-2 pr-4"><SignalBadge signal={t.direction} /></td>
-                      <td className="py-2 pr-4 font-mono text-xs">${t.entry_price.toLocaleString()}</td>
-                      <td className="py-2 pr-4 font-mono text-xs">${t.exit_price.toLocaleString()}</td>
-                      <td className="py-2 pr-4">
-                        <div><PnlValue value={t.pnl} /></div>
-                        <div className={`text-xs font-mono ${t.pnl_pct >= 0 ? "text-green-400/70" : "text-red-400/70"}`}>
-                          {t.pnl_pct >= 0 ? "+" : ""}{t.pnl_pct.toFixed(2)}%
-                        </div>
-                      </td>
-                      <td className="py-2 pr-4 text-xs text-[var(--muted)]">{t.strategy}</td>
-                      <td className="py-2 text-xs text-[var(--muted)]">
-                        {t.duration_seconds < 60 ? `${t.duration_seconds.toFixed(0)}s` : `${(t.duration_seconds / 60).toFixed(1)}m`}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="mb-4 inline-flex rounded-lg border border-[var(--border)] bg-black/15 p-1 text-xs">
+              <button
+                onClick={() => setTradeView("table")}
+                className={`px-3 py-1.5 rounded-md transition-colors ${tradeView === "table" ? "bg-cyan-500/20 text-cyan-200 border border-cyan-500/40" : "text-[var(--muted)] hover:text-[var(--text)]"}`}
+              >
+                Tabla
+              </button>
+              <button
+                onClick={() => setTradeView("chart")}
+                className={`px-3 py-1.5 rounded-md transition-colors ${tradeView === "chart" ? "bg-cyan-500/20 text-cyan-200 border border-cyan-500/40" : "text-[var(--muted)] hover:text-[var(--text)]"}`}
+              >
+                Gráfico
+              </button>
             </div>
+
+            {tradeView === "table" ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm lg:text-base">
+                  <thead>
+                    <tr className="text-left text-xs text-[var(--muted)] border-b border-[var(--border)]">
+                      <th className="pb-2 pr-4">Par</th>
+                      <th className="pb-2 pr-4">Dir.</th>
+                      <th className="pb-2 pr-4">Entrada</th>
+                      <th className="pb-2 pr-4">Salida</th>
+                      <th className="pb-2 pr-4">PnL</th>
+                      <th className="pb-2 pr-4">Estrategia</th>
+                      <th className="pb-2">Duración</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {trades.map((t, i) => (
+                      <tr key={i} className="border-b border-[var(--border)]/50 hover:bg-white/[0.02]">
+                        <td className="py-2 pr-4 font-semibold">{t.symbol}</td>
+                        <td className="py-2 pr-4"><SignalBadge signal={t.direction} /></td>
+                        <td className="py-2 pr-4 font-mono text-xs">${t.entry_price.toLocaleString()}</td>
+                        <td className="py-2 pr-4 font-mono text-xs">${t.exit_price.toLocaleString()}</td>
+                        <td className="py-2 pr-4">
+                          <div><PnlValue value={t.pnl} /></div>
+                          <div className={`text-xs font-mono ${t.pnl_pct >= 0 ? "text-green-400/70" : "text-red-400/70"}`}>
+                            {t.pnl_pct >= 0 ? "+" : ""}{t.pnl_pct.toFixed(2)}%
+                          </div>
+                        </td>
+                        <td className="py-2 pr-4 text-xs text-[var(--muted)]">{t.strategy}</td>
+                        <td className="py-2 text-xs text-[var(--muted)]">
+                          {t.duration_seconds < 60 ? `${t.duration_seconds.toFixed(0)}s` : `${(t.duration_seconds / 60).toFixed(1)}m`}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <TradesPnlChart trades={trades} />
+            )}
           </Card>
         )}
 
@@ -1352,74 +1614,59 @@ export default function Dashboard() {
 
       {/* ── Floating action buttons (BULLISH + BOMBARDA) ── */}
       {/* BULLISH Button */}
-      {(() => {
-        const bullishFloat = useDraggableFloat<HTMLButtonElement>("float_bullish", { x: typeof window !== "undefined" ? window.innerWidth - 100 : 0, y: typeof window !== "undefined" ? window.innerHeight - 200 : 0 });
-        return (
-          <button
-            ref={bullishFloat.elementRef}
-            onMouseDown={bullishFloat.handleMouseDown}
-            onClick={() => setShowBullish(true)}
-            title="Compra manual (BULLISH mode) - ¡Draggeable!"
-            className="w-14 h-14 rounded-full shadow-xl transition-all duration-150 active:scale-95 flex items-center justify-center text-2xl"
-            style={{
-              ...bullishFloat.style,
-              background: "radial-gradient(circle at 35% 35%, #4ade80, #16a34a 60%, #14532d)",
-              boxShadow: "0 2px 0 #14532d, 0 4px 12px rgba(22,163,74,0.6), inset 0 1px 2px rgba(255,255,255,0.25)",
-            } as React.CSSProperties}
-          >
-            🐂
-          </button>
-        );
-      })()}
+      <button
+        ref={bullishFloat.elementRef}
+        onMouseDown={bullishFloat.handleMouseDown}
+        onClick={() => setShowBullish(true)}
+        title="Compra manual (BULLISH mode) - ¡Draggeable!"
+        className="w-14 h-14 rounded-full shadow-xl transition-all duration-150 active:scale-95 flex items-center justify-center text-2xl"
+        style={{
+          ...bullishFloat.style,
+          background: "radial-gradient(circle at 35% 35%, #4ade80, #16a34a 60%, #14532d)",
+          boxShadow: "0 2px 0 #14532d, 0 4px 12px rgba(22,163,74,0.6), inset 0 1px 2px rgba(255,255,255,0.25)",
+        } as React.CSSProperties}
+      >
+        🐂
+      </button>
 
       {/* BOMBARDA Button */}
-      {(() => {
-        const bombardaFloat = useDraggableFloat<HTMLButtonElement>("float_bombarda", { x: typeof window !== "undefined" ? window.innerWidth - 140 : 0, y: typeof window !== "undefined" ? window.innerHeight - 200 : 0 });
-        return (
-          <button
-            ref={bombardaFloat.elementRef}
-            onMouseDown={bombardaFloat.handleMouseDown}
-            onClick={() => { setBombardaResult(null); setShowBombarda(true); }}
-            title="Cerrar todas las posiciones (LA BOMBARDA) - ¡Draggeable!"
-            className="w-14 h-14 rounded-full shadow-xl transition-all duration-150 active:scale-95 flex items-center justify-center text-2xl animate-pulse"
-            style={{
-              ...bombardaFloat.style,
-              background: "radial-gradient(circle at 35% 35%, #f87171, #dc2626 60%, #7f1d1d)",
-              boxShadow: "0 2px 0 #7f1d1d, 0 4px 12px rgba(220,38,38,0.6), inset 0 1px 2px rgba(255,255,255,0.2)",
-            } as React.CSSProperties}
-          >
-            💣
-          </button>
-        );
-      })()}
+      <button
+        ref={bombardaFloat.elementRef}
+        onMouseDown={bombardaFloat.handleMouseDown}
+        onClick={() => { setBombardaResult(null); setShowBombarda(true); }}
+        title="Cerrar todas las posiciones (LA BOMBARDA) - ¡Draggeable!"
+        className="w-14 h-14 rounded-full shadow-xl transition-all duration-150 active:scale-95 flex items-center justify-center text-2xl animate-pulse"
+        style={{
+          ...bombardaFloat.style,
+          background: "radial-gradient(circle at 35% 35%, #f87171, #dc2626 60%, #7f1d1d)",
+          boxShadow: "0 2px 0 #7f1d1d, 0 4px 12px rgba(220,38,38,0.6), inset 0 1px 2px rgba(255,255,255,0.2)",
+        } as React.CSSProperties}
+      >
+        💣
+      </button>
 
       {/* ── Marquitos Chat ── */}
       <>
         {/* Botón flotante rojo a la izquierda - Marquitos */}
-        {(() => {
-          const marquitosFloat = useDraggableFloat<HTMLButtonElement>("float_marquitos", { x: 20, y: typeof window !== "undefined" ? window.innerHeight - 200 : 0 });
-          return (
-            <button
-              ref={marquitosFloat.elementRef}
-              onMouseDown={marquitosFloat.handleMouseDown}
-              onClick={() => setShowMarquitos(v => !v)}
-              title="Llamar a Marquitos - ¡Draggeable!"
-              className="w-14 h-14 rounded-full shadow-xl transition-all duration-150 active:scale-95 flex items-center justify-center text-2xl relative"
-              style={{
-                ...marquitosFloat.style,
-                background: showMarquitos
-                  ? "radial-gradient(circle at 35% 35%, #f87171, #dc2626 60%, #7f1d1d)"
-                  : "radial-gradient(circle at 35% 35%, #fca5a5, #ef4444 60%, #7f1d1d)",
-                boxShadow: "0 6px 0 #7f1d1d, 0 10px 20px rgba(220,38,38,0.5), inset 0 2px 4px rgba(255,255,255,0.2)",
-              } as React.CSSProperties}
-            >
-              {showMarquitos ? "✕" : "⚡"}
-              {!showMarquitos && (
-                <span className="absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-red-300 border-2 border-[var(--bg)] animate-ping" />
-              )}
-            </button>
-          );
-        })()}
+        <button
+          ref={marquitosFloat.elementRef}
+          onMouseDown={marquitosFloat.handleMouseDown}
+          onClick={() => setShowMarquitos(v => !v)}
+          title="Llamar a Marquitos - ¡Draggeable!"
+          className="w-14 h-14 rounded-full shadow-xl transition-all duration-150 active:scale-95 flex items-center justify-center text-2xl relative"
+          style={{
+            ...marquitosFloat.style,
+            background: showMarquitos
+              ? "radial-gradient(circle at 35% 35%, #f87171, #dc2626 60%, #7f1d1d)"
+              : "radial-gradient(circle at 35% 35%, #fca5a5, #ef4444 60%, #7f1d1d)",
+            boxShadow: "0 6px 0 #7f1d1d, 0 10px 20px rgba(220,38,38,0.5), inset 0 2px 4px rgba(255,255,255,0.2)",
+          } as React.CSSProperties}
+        >
+          {showMarquitos ? "✕" : "⚡"}
+          {!showMarquitos && (
+            <span className="absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-red-300 border-2 border-[var(--bg)] animate-ping" />
+          )}
+        </button>
         {/* Ventana MarquitosChat */}
         {showMarquitos && (
           <MarquitosChat isOpen={showMarquitos} onClose={() => setShowMarquitos(false)} />

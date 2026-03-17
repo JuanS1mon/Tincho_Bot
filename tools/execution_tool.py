@@ -10,11 +10,11 @@ Interfaz de alto nivel para ejecutar trades completos:
 from __future__ import annotations
 
 from typing import Optional
+from binance.exceptions import BinanceAPIException
 
 from exchange.order_manager import order_manager, OrderManager
 from tools.portfolio_tool import portfolio_tool, Position, PortfolioTool
 from tools.risk_tool import RiskParams
-from config.settings import settings
 from config.logger import trading_logger as logger, error_logger
 
 
@@ -28,6 +28,13 @@ class ExecutionTool:
     ) -> None:
         self._orders = order_mgr
         self._portfolio = portfolio
+        self._blocked_symbols: dict[str, str] = {}
+
+    def is_symbol_blocked(self, symbol: str) -> bool:
+        return symbol.upper() in self._blocked_symbols
+
+    def get_block_reason(self, symbol: str) -> str:
+        return self._blocked_symbols.get(symbol.upper(), "Símbolo bloqueado")
 
     def execute(
         self,
@@ -47,6 +54,12 @@ class ExecutionTool:
             logger.warning("execute: risk_params no válidos → abortando")
             return None
 
+        symbol = symbol.upper()
+        if self.is_symbol_blocked(symbol):
+            reason = self.get_block_reason(symbol)
+            logger.warning("[%s] Ejecución omitida: %s", symbol, reason)
+            return {"status": "blocked", "symbol": symbol, "reason": reason}
+
         logger.info(
             "[%s] Ejecutando %s en %s | qty=%.4f | capital=%.2f USDT | SL=%.4f | TP=%s",
             "DRY-RUN" if dry_run else "REAL",
@@ -63,7 +76,7 @@ class ExecutionTool:
 
         try:
             # 1. Configurar leverage
-            self._orders.set_leverage(symbol, settings.leverage)
+            self._orders.set_leverage(symbol, risk_params.leverage)
 
             # 2. Abrir posición
             side = "BUY" if direction == "LONG" else "SELL"
@@ -110,6 +123,16 @@ class ExecutionTool:
                 "direction": direction,
             }
 
+        except BinanceAPIException as exc:
+            if exc.code == -4411:
+                reason = (
+                    "Binance exige firmar el acuerdo TradFi-Perps (fapi) para este símbolo."
+                )
+                self._blocked_symbols[symbol] = reason
+                logger.warning("[%s] %s", symbol, reason)
+                return {"status": "blocked", "symbol": symbol, "reason": reason}
+            error_logger.error("ExecutionTool.execute(%s %s) error: %s", direction, symbol, exc)
+            return None
         except Exception as exc:
             error_logger.error("ExecutionTool.execute(%s %s) error: %s", direction, symbol, exc)
             return None

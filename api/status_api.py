@@ -573,42 +573,57 @@ def _load_tincho2_prompt() -> str:
 
 
 # Meme coins a monitorear en tiempo real para el chat de Tincho2
-_MEME_COINS = [
+_MEME_COINS = {
     "DOGEUSDT", "SHIBUSDT", "PEPEUSDT", "WIFUSDT", "BONKUSDT",
     "FLOKIUSDT", "MEMEUSDT", "NEIROUSDT", "DOGSUSDT", "NOTUSDT",
     "1000SATSUSDT", "TURBOUSDT", "MAGAUSDT", "PNUTUSDT",
-]
+}
+
+# Caché del bulk ticker para no golpear la API en cada mensaje
+_MEME_TICKER_CACHE: list[dict] = []
+_MEME_TICKER_CACHE_AT: float = 0.0
+_MEME_TICKER_CACHE_TTL: int = 60  # segundos
 
 
 def _fetch_meme_coins_context() -> str:
     """
     Busca datos en tiempo real de meme coins populares desde Binance Futures.
-    Retorna un bloque de texto con precio, cambio 24h y volumen.
+    Usa un request masivo (todos los tickers de una vez) para evitar errores
+    de símbolo inválido en monedas no listadas en este exchange.
     """
-    lines: list[str] = []
-    fetched: list[dict] = []
+    import time as _time
+    global _MEME_TICKER_CACHE, _MEME_TICKER_CACHE_AT
 
-    for symbol in _MEME_COINS:
+    now = _time.time()
+    if not _MEME_TICKER_CACHE or (now - _MEME_TICKER_CACHE_AT) > _MEME_TICKER_CACHE_TTL:
         try:
-            ticker = order_manager._client.safe_call(
-                order_manager._client.client.futures_ticker,
-                symbol=symbol,
+            all_tickers = order_manager._client.safe_call(
+                order_manager._client.client.futures_ticker
             )
-            if not ticker or "lastPrice" not in ticker:
-                continue
+            _MEME_TICKER_CACHE = all_tickers if isinstance(all_tickers, list) else []
+            _MEME_TICKER_CACHE_AT = now
+        except Exception:
+            return ""
+
+    fetched: list[dict] = []
+    for ticker in _MEME_TICKER_CACHE:
+        symbol = str(ticker.get("symbol", ""))
+        if symbol not in _MEME_COINS:
+            continue
+        try:
             price = float(ticker["lastPrice"])
             change_pct = float(ticker.get("priceChangePercent", 0))
             volume_usdt = float(ticker.get("quoteVolume", 0))
             if price <= 0:
                 continue
             fetched.append({
-                "symbol": symbol.replace("USDT", ""),
+                "symbol": symbol.replace("USDT", "").replace("1000", "1000"),
                 "price": price,
                 "change_pct": change_pct,
                 "volume_usdt": volume_usdt,
             })
         except Exception:
-            continue  # moneda no disponible en este exchange/testnet
+            continue
 
     if not fetched:
         return ""
@@ -616,7 +631,7 @@ def _fetch_meme_coins_context() -> str:
     # Ordenar por volumen 24h descendente (las más activas primero)
     fetched.sort(key=lambda x: x["volume_usdt"], reverse=True)
 
-    lines.append("\n=== MEME COINS (datos en tiempo real de Binance Futures) ===")
+    lines = ["\n=== MEME COINS (datos en tiempo real de Binance Futures) ==="]
     for c in fetched:
         arrow = "🟢" if c["change_pct"] >= 0 else "🔴"
         vol_m = c["volume_usdt"] / 1_000_000
@@ -725,46 +740,12 @@ async def chat_with_tincho2(req: ChatRequest) -> Dict[str, Any]:
         logger.error("Tincho2 chat error: %s", exc)
         raise HTTPException(status_code=502, detail=f"Error consultando IA: {exc}")
 
-    # Detectar etiqueta [PARAMS:{...}] y aplicar cambios de modo robusto
+    # Detectar etiqueta [PARAMS:{...}] pero NO aplicar cambios desde Tincho2.
+    # Las modificaciones de parámetros deben venir del flujo de Tincho1/auto-modo.
     params_applied: Dict[str, Any] | None = None
     params_match = _re.search(r"\[PARAMS:(\{.*?\})\]", reply, _re.DOTALL)
     if params_match:
-        raw_json = params_match.group(1)
-        # Intentar corregir JSON malformado (comas, comillas, etc.)
-        try:
-            adjustments = _json.loads(raw_json)
-        except Exception:
-            try:
-                # Reparar comillas simples/dobles y eliminar trailing commas
-                fixed = raw_json.replace("'", '"').replace(",}", "}").replace(",]", "]")
-                adjustments = _json.loads(fixed)
-            except Exception as exc:
-                logger.warning("No se pudo parsear [PARAMS:...]: %s", exc)
-                adjustments = None
-        if adjustments:
-            # Si el usuario pidió modo tryhard, chill o putita, aplicar preset
-            modo = None
-            req_text = req.message.lower()
-            if any(w in req_text for w in ["tryhard", "agresivo", "a morir"]):
-                modo = "tryhard"
-            elif any(w in req_text for w in ["chill", "balanceado", "normal"]):
-                modo = "chill"
-            elif any(w in req_text for w in ["putita", "conservador", "cauteloso", "con miedo"]):
-                modo = "putita"
-            if modo:
-                presets = {
-                    "tryhard": {"leverage": 20, "stop_loss": 0.04, "take_profit": 0.00, "max_capital_per_trade": 0.50, "risk_per_trade": 0.03},
-                    "chill":   {"leverage": 10, "stop_loss": 0.03, "take_profit": 0.00, "max_capital_per_trade": 0.35, "risk_per_trade": 0.02},
-                    "putita":  {"leverage": 5,  "stop_loss": 0.015, "take_profit": 0.00, "max_capital_per_trade": 0.15, "risk_per_trade": 0.005},
-                }
-                adjustments.update(presets[modo])
-            changed = parameters_manager.apply_adjustments(
-                adjustments,
-                reason=f"Tincho2 chat: {req.message[:80]}"
-            )
-            if changed:
-                params_applied = adjustments
-                logger.info("⚙️ Tincho2 ajustó parámetros: %s", adjustments)
+        logger.info("Tincho2 envió [PARAMS], pero la aplicación de ajustes por chat está desactivada")
         # Limpiar la etiqueta del texto visible
         reply = _re.sub(r"\s*\[PARAMS:\{.*?\}\]", "", reply, flags=_re.DOTALL).strip()
 

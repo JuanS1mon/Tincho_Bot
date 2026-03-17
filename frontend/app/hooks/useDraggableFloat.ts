@@ -5,13 +5,22 @@ export interface FloatPosition {
   y: number;
 }
 
+export interface FloatViewport {
+  width: number;
+  height: number;
+}
+
+type FloatDefaultPos = FloatPosition | ((viewport: FloatViewport) => FloatPosition);
+
 const DEFAULT_POS: FloatPosition = { x: 0, y: 0 };
 
-export function useDraggableFloat<T extends HTMLElement = HTMLDivElement>(storageKey: string, defaultPos: FloatPosition = DEFAULT_POS) {
-  const [position, setPosition] = useState<FloatPosition>(defaultPos);
+export function useDraggableFloat<T extends HTMLElement = HTMLDivElement>(storageKey: string, defaultPos: FloatDefaultPos = DEFAULT_POS) {
+  const initialPos = typeof defaultPos === 'function' ? DEFAULT_POS : defaultPos;
+  const [position, setPosition] = useState<FloatPosition>(initialPos);
   const [isDragging, setIsDragging] = useState(false);
   const [dragOffset, setDragOffset] = useState<FloatPosition>({ x: 0, y: 0 });
   const elementRef = useRef<T>(null);
+  const [isLoaded, setIsLoaded] = useState(false);
 
   // Load position from localStorage on mount
   useEffect(() => {
@@ -22,13 +31,21 @@ export function useDraggableFloat<T extends HTMLElement = HTMLDivElement>(storag
       } catch (e) {
         console.warn('Failed to load float position', e);
       }
+    } else if (typeof defaultPos === 'function') {
+      const resolved = defaultPos({
+        width: window.innerWidth,
+        height: window.innerHeight,
+      });
+      setPosition(resolved);
     }
+    setIsLoaded(true);
   }, [storageKey]);
 
   // Save position to localStorage whenever it changes
   useEffect(() => {
+    if (!isLoaded) return;
     localStorage.setItem(storageKey, JSON.stringify(position));
-  }, [position, storageKey]);
+  }, [position, storageKey, isLoaded]);
 
   const snapToEdge = (x: number, y: number, width: number, height: number) => {
     const windowWidth = window.innerWidth;

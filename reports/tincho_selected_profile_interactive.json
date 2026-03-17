@@ -1,0 +1,20 @@
+{
+  "generated_at": "2026-03-17T19:15:59.666887+00:00",
+  "source_report": "reports/tincho_two_layer_report.json",
+  "selected_profile": "interactive",
+  "tincho1_mode": "putita",
+  "adjustments": {
+    "leverage": 5,
+    "stop_loss": 0.015,
+    "take_profit": 0.0,
+    "max_capital_per_trade": 0.15,
+    "risk_per_trade": 0.005
+  },
+  "report_profile_adjustments": {},
+  "layer2_status": "caution",
+  "summary": "Predicciones negativas para ambos s\u00edmbolos con baja confianza, pero m\u00e9tricas hist\u00f3ricas positivas",
+  "why": [
+    "Predicciones de PNL negativas (-0.32% BTC, -2.48% ETH) con confianza baja (0.2)",
+    "Volatilidad elevada especialmente en ETH (4.28%)"
+  ]
+}

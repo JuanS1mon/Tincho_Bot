@@ -10,6 +10,7 @@ Gestiona la ejecución de órdenes en Binance Futures:
 """
 from __future__ import annotations
 
+import time
 from decimal import Decimal, ROUND_DOWN
 from typing import Any, Dict, Optional
 
@@ -26,6 +27,35 @@ class OrderManager:
     def __init__(self) -> None:
         self._client = futures_client
         self._symbol_rules_cache: Dict[str, Dict[str, Decimal]] = {}
+        self._symbol_max_leverage_cache: Dict[str, int] = {}
+        self._symbol_status_cache: Dict[str, str] = {}
+        self._symbol_status_cache_at: float = 0.0
+
+    def _refresh_symbol_status_cache(self, max_age_seconds: int = 300) -> None:
+        now = time.time()
+        if self._symbol_status_cache and (now - self._symbol_status_cache_at) < max_age_seconds:
+            return
+        info = self._client.safe_call(self._client.client.futures_exchange_info)
+        symbols = info.get("symbols", []) if isinstance(info, dict) else []
+        self._symbol_status_cache = {
+            str(s.get("symbol", "")).upper(): str(s.get("status", ""))
+            for s in symbols
+            if s.get("symbol")
+        }
+        self._symbol_status_cache_at = now
+
+    def is_symbol_open(self, symbol: str) -> bool:
+        """Retorna True si el símbolo está en estado TRADING en Binance Futures."""
+        symbol = symbol.upper()
+        try:
+            self._refresh_symbol_status_cache()
+            status = self._symbol_status_cache.get(symbol)
+            if status is None:
+                return True
+            return status == "TRADING"
+        except Exception as exc:
+            logger.warning("No se pudo validar estado de %s: %s", symbol, exc)
+            return True
 
     def _get_symbol_rules(self, symbol: str) -> Dict[str, Decimal]:
         """Obtiene stepSize/minQty de LOT_SIZE para normalizar quantities."""
@@ -71,8 +101,43 @@ class OrderManager:
 
     # ── Apalancamiento ────────────────────────────────────────────────────────
 
+    def _get_symbol_max_leverage(self, symbol: str) -> int | None:
+        """Intenta obtener el leverage máximo permitido para un símbolo."""
+        symbol = symbol.upper()
+        cached = self._symbol_max_leverage_cache.get(symbol)
+        if cached is not None:
+            return cached
+
+        try:
+            raw = self._client.safe_call(
+                self._client.client.futures_leverage_bracket,
+                symbol=symbol,
+            )
+
+            rows = raw if isinstance(raw, list) else [raw]
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                if row.get("symbol") != symbol:
+                    continue
+                brackets = row.get("brackets", [])
+                max_lev = 0
+                for b in brackets:
+                    try:
+                        max_lev = max(max_lev, int(b.get("initialLeverage", 0)))
+                    except (TypeError, ValueError):
+                        continue
+                if max_lev > 0:
+                    self._symbol_max_leverage_cache[symbol] = max_lev
+                    return max_lev
+        except Exception as exc:
+            logger.warning("No se pudo leer max leverage de %s: %s", symbol, exc)
+
+        return None
+
     def set_leverage(self, symbol: str, leverage: int) -> Dict[str, Any]:
         """Establece el apalancamiento para el símbolo indicado."""
+        symbol = symbol.upper()
         try:
             result = self._client.safe_call(
                 self._client.client.futures_change_leverage,
@@ -82,6 +147,32 @@ class OrderManager:
             logger.info("Leverage %s → %dx", symbol, leverage)
             return result
         except BinanceAPIException as exc:
+            # Binance -4028: el leverage solicitado no es válido para este símbolo.
+            if exc.code == -4028:
+                max_allowed = self._get_symbol_max_leverage(symbol)
+                if max_allowed is not None:
+                    fallback = max(1, min(int(leverage), int(max_allowed)))
+                    if fallback != int(leverage):
+                        logger.warning(
+                            "Leverage %s %dx inválido. Reintentando con máximo permitido %dx.",
+                            symbol,
+                            leverage,
+                            fallback,
+                        )
+                    else:
+                        logger.warning(
+                            "Leverage %s %dx inválido. Reintentando con %dx por brackets.",
+                            symbol,
+                            leverage,
+                            fallback,
+                        )
+                    result = self._client.safe_call(
+                        self._client.client.futures_change_leverage,
+                        symbol=symbol,
+                        leverage=fallback,
+                    )
+                    logger.info("Leverage %s ajustado automáticamente a %dx", symbol, fallback)
+                    return result
             error_logger.error("set_leverage(%s, %d) error: %s", symbol, leverage, exc)
             raise
 
@@ -241,6 +332,47 @@ class OrderManager:
         except BinanceAPIException as exc:
             error_logger.error("get_open_orders(%s) error: %s", symbol, exc)
             return []
+
+    def cancel_all_open_orders(self, symbol: str) -> list:
+        """Cancela todas las órdenes abiertas de un símbolo."""
+        try:
+            result = self._client.safe_call(
+                self._client.client.futures_cancel_all_open_orders,
+                symbol=symbol,
+            )
+            logger.info("Órdenes abiertas canceladas: %s", symbol)
+            return result if isinstance(result, list) else [result]
+        except BinanceAPIException as exc:
+            error_logger.error("cancel_all_open_orders(%s) error: %s", symbol, exc)
+            return []
+
+    def refresh_protection_orders(
+        self,
+        symbol: str,
+        direction: str,
+        stop_loss_price: float,
+        take_profit_price: float,
+        quantity: float,
+        trailing_callback_pct: float = 1.0,
+    ) -> dict:
+        """
+        Reemplaza protecciones (SL/TP/Trailing) para la cantidad actual.
+        Cancela las órdenes abiertas del símbolo y recrea protección completa.
+        """
+        self.cancel_all_open_orders(symbol)
+        side = "BUY" if direction == "LONG" else "SELL"
+
+        sl_order = self.set_stop_loss(symbol, side, stop_loss_price, quantity)
+        tp_order = None
+        if take_profit_price > 0:
+            tp_order = self.set_take_profit(symbol, side, take_profit_price, quantity)
+        trailing_order = self.set_trailing_stop(symbol, side, trailing_callback_pct, quantity)
+
+        return {
+            "sl_order_id": sl_order.get("orderId"),
+            "tp_order_id": tp_order.get("orderId") if tp_order else None,
+            "trailing_order_id": trailing_order.get("orderId"),
+        }
 
 
 # Instancia global

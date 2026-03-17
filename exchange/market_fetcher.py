@@ -219,10 +219,64 @@ class MarketFetcher:
 
     # ── Balance de cuenta ─────────────────────────────────────────────────────
 
+    def get_usdt_available_balance(self) -> Optional[float]:
+        """
+        Retorna el availableBalance real de USDT-M Futures para abrir nuevas posiciones.
+        Prioriza:
+          - availableBalance
+          - withdrawAvailable
+        """
+        from binance.exceptions import BinanceAPIException as _BinExc
+
+        def _extract_available(assets: List[Dict[str, Any]]) -> Optional[float]:
+            for asset in assets:
+                if asset.get("asset") != "USDT":
+                    continue
+                available = float(
+                    asset.get("availableBalance", asset.get("withdrawAvailable", 0)) or 0
+                )
+                logger.info("Available Binance Futures (USDT): %.4f", available)
+                return available
+            return None
+
+        try:
+            balances = self._client.safe_call(self._client.client.futures_account_balance)
+            available = _extract_available(balances)
+            if available is not None:
+                return available
+
+            account = self._client.safe_call(self._client.client.futures_account)
+            assets = account.get("assets", []) if isinstance(account, dict) else []
+            available = _extract_available(assets)
+            if available is not None:
+                return available
+
+            logger.warning(
+                "get_usdt_available_balance: no se encontró asset USDT en respuesta de Binance Futures."
+            )
+        except _BinExc as exc:
+            if exc.code == -2015:
+                logger.debug(
+                    "get_usdt_available_balance: sin permisos (-2015). "
+                    "Verificá API key Futures e IP whitelist."
+                )
+            elif exc.code == -1021:
+                logger.warning(
+                    "get_usdt_available_balance: timestamp fuera de ventana (-1021)."
+                )
+            else:
+                logger.warning("No se pudo obtener availableBalance de Binance: %s", exc)
+        except Exception as exc:
+            logger.warning("No se pudo obtener availableBalance de Binance (error inesperado): %s", exc)
+
+        return None
+
     def get_usdt_balance(self) -> Optional[float]:
         """
-        Retorna el saldo total USDT de la cuenta Futures (walletBalance).
-        Incluye PnL no realizado de posiciones abiertas (marginBalance).
+                Retorna el saldo total USDT de la cuenta Futures.
+                Soporta variantes de campos de Binance en USD-M:
+                    - walletBalance / marginBalance / availableBalance
+                    - balance / withdrawAvailable / crossUnPnl
         Retorna None si no se puede obtener (error de API, permisos, etc.).
         """
         from binance.exceptions import BinanceAPIException as _BinExc
@@ -230,9 +284,21 @@ class MarketFetcher:
         def _extract_usdt_balance(assets: List[Dict[str, Any]]) -> Optional[float]:
             for asset in assets:
                 if asset.get("asset") == "USDT":
-                    wallet = float(asset.get("walletBalance", 0) or 0)
-                    margin = float(asset.get("marginBalance", wallet) or wallet)
-                    available = float(asset.get("availableBalance", 0) or 0)
+                    # Binance puede devolver distintos nombres de campo según endpoint/cuenta.
+                    wallet = float(
+                        asset.get("walletBalance", asset.get("balance", 0)) or 0
+                    )
+
+                    unrealized = float(
+                        asset.get("unrealizedProfit", asset.get("crossUnPnl", 0)) or 0
+                    )
+                    margin = float(
+                        asset.get("marginBalance", wallet + unrealized) or (wallet + unrealized)
+                    )
+
+                    available = float(
+                        asset.get("availableBalance", asset.get("withdrawAvailable", 0)) or 0
+                    )
                     # En algunas cuentas USDⓈ-M la API puede devolver wallet/margin=0
                     # y availableBalance>0. Priorizamos el primer saldo positivo útil.
                     if margin > 0:

@@ -186,6 +186,7 @@ class AgentConfig:
             "risk_per_trade":            (0.005, 0.05, float),
             "stop_loss":                 (0.01,  0.08, float),
             "take_profit":               (0.00,  0.30, float),
+            "profit_lock_retrace_pct":   (0.05,  0.40, float),
             "analysis_interval_seconds": (180,   3600, int),
             "sma20_proximity_pct":       (0.005, 0.05, float),
             "rsi_long_threshold":        (40.0,  65.0, float),

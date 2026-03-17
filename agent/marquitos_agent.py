@@ -9,7 +9,7 @@ Arquitectura de agente:
       1. Usa CoinFinder para buscar meme coins / altcoins volátiles
       2. Analiza los candidatos técnicamente
       3. Llama a DeepSeek para elegir la mejor moneda
-      4. Abre 1 LONG con todo el capital
+    4. Abre 1 posición (LONG o SHORT) con todo el capital
       5. Monitorea cada 5s:
            → TP >= +0.8%: VENDE
            → SL <= -0.3%: VENDE
@@ -41,6 +41,7 @@ STOP_LOSS_PCT: float = 0.003         # 0.3% → sell para no perder
 SCAN_INTERVAL: int = 10              # segundos entre scans sin posición
 MONITOR_INTERVAL: int = 5            # segundos entre chequeos de posición
 AI_HOLD_ZONE_PCT: float = 0.001      # si PnL entre -0.1% y +0.4% → consulta IA
+DEFAULT_TRADE_AMOUNT_USDT: float = 10.0
 
 
 def _build_llm_client():
@@ -74,6 +75,8 @@ class MarquitosAgent:
         self.initial_capital: float = 0.0
         self.position: Optional[dict] = None
         self.position_symbol: Optional[str] = None
+        self.position_side: Optional[str] = None
+        self.preferred_symbol: Optional[str] = None
         self._stop_event = threading.Event()
         self._running = False
         self.total_pnl: float = 0.0
@@ -81,11 +84,26 @@ class MarquitosAgent:
         self.trades_total: int = 0
         self.brain = marquitos_brain
         self.awaiting_capital: bool = True
+        self.awaiting_symbol: bool = True
         self.last_signals: Dict[str, Any] = {}
         # Última decisión de la IA (para debug/chat)
         self.last_ai_decision: str = ""
 
     # ── Control externo ───────────────────────────────────────────────────────
+
+    def prepare_new_session(self) -> None:
+        """Resetea el estado para una sesión nueva controlada por chat."""
+        self.stop()
+        self.capital = 0.0
+        self.initial_capital = 0.0
+        self.position = None
+        self.position_symbol = None
+        self.position_side = None
+        self.preferred_symbol = None
+        self.awaiting_capital = True
+        self.awaiting_symbol = True
+        self.last_ai_decision = ""
+        self.last_signals = {}
 
     def set_capital_from_user(self, amount: float) -> None:
         self.capital = round(amount, 2)
@@ -93,11 +111,31 @@ class MarquitosAgent:
         self.awaiting_capital = False
         logger.info("🐺 [Marquitos] Capital asignado: %.2f USDT", self.capital)
 
+    def set_symbol_from_user(self, symbol: str) -> str:
+        clean = symbol.upper().strip()
+        if not clean.endswith("USDT"):
+            clean += "USDT"
+        self.preferred_symbol = clean
+        self.awaiting_symbol = False
+        logger.info("🐺 [Marquitos] Moneda elegida por usuario: %s", clean)
+        return clean
+
     def force_buy(self, symbol: str) -> dict:
         """Compra inmediata de un símbolo específico sin esperar el ciclo de scan."""
+        return self.force_trade(symbol=symbol, side="LONG")
+
+    def force_short(self, symbol: str) -> dict:
+        """Venta en corto inmediata de un símbolo específico sin esperar el ciclo de scan."""
+        return self.force_trade(symbol=symbol, side="SHORT")
+
+    def force_trade(self, symbol: str, side: str = "LONG") -> dict:
+        """Ejecuta trade inmediato (LONG/SHORT) en un símbolo específico."""
         symbol = symbol.upper()
         if not symbol.endswith("USDT"):
             symbol += "USDT"
+        side = side.upper().strip()
+        if side not in {"LONG", "SHORT"}:
+            return {"ok": False, "error": "Dirección inválida. Usá LONG o SHORT."}
 
         if self.position is not None:
             return {"ok": False, "error": f"Ya estoy operando {self.position_symbol}. Esperá que cierre."}
@@ -121,6 +159,7 @@ class MarquitosAgent:
             "current_price": price,
             "change_pct": 0,
             "category": category,
+            "side": side,
         }
         self._open_position(entry)
 
@@ -128,6 +167,7 @@ class MarquitosAgent:
             return {
                 "ok": True,
                 "symbol": symbol,
+                "side": side,
                 "price": price,
                 "tp": self.position["take_profit_price"],
                 "sl": self.position["stop_loss_price"],
@@ -147,13 +187,18 @@ class MarquitosAgent:
             "trades_total": self.trades_total,
             "running": self._running,
             "awaiting_capital": self.awaiting_capital,
+            "awaiting_symbol": self.awaiting_symbol,
+            "preferred_symbol": self.preferred_symbol,
+            "default_amount": DEFAULT_TRADE_AMOUNT_USDT,
             "last_signals": self.last_signals,
             "last_ai_decision": self.last_ai_decision,
             "position": None,
+            "position_side": self.position_side,
         }
         if self.position is not None:
             state["position"] = {
                 "symbol": self.position_symbol,
+                "side": self.position.get("side", self.position_side or "LONG"),
                 "entry_price": self.position["entry_price"],
                 "current_price": self.position.get("current_price", self.position["entry_price"]),
                 "take_profit_price": self.position["take_profit_price"],
@@ -219,9 +264,9 @@ class MarquitosAgent:
         # Resumen de señales visible en frontend/chat
         self.last_signals = {
             c["symbol"]: (
-                f"📈 {c['change_pct']:+.1f}% 24h | "
+                f"{'📈' if c['change_pct'] >= 0 else '📉'} {c['change_pct']:+.1f}% 24h | "
                 f"vol={c['volume_usdt']/1_000_000:.1f}M | "
-                f"{'🎰 meme' if c['is_meme'] else 'altcoin'}"
+                f"{'🎰 meme' if c['is_meme'] else 'altcoin'} | bias={c.get('direction_hint', 'LONG')}"
             )
             for c in candidates[:8]
         }
@@ -239,13 +284,15 @@ class MarquitosAgent:
     def _ai_pick_coin(self, candidates: List[dict]) -> Optional[dict]:
         """
         Envía la lista de candidatos a DeepSeek y recibe cuál operar.
-        Responde JSON: {"symbol": "PEPEUSDT", "reason": "..."} o {"symbol": null, "reason": "..."}.
+        Responde JSON: {"symbol": "PEPEUSDT", "side": "LONG|SHORT", "reason": "..."}
+        o {"symbol": null, "side": null, "reason": "..."}.
         """
         try:
             lines: List[str] = []
             for i, c in enumerate(candidates, 1):
                 lines.append(
                     f"{i}. {c['symbol']} | cambio24h={c['change_pct']:+.1f}% | "
+                    f"bias={c.get('direction_hint', 'LONG')} | "
                     f"momentum_1m={c.get('momentum_5c', 0):.3f}% | "
                     f"RSI={c.get('rsi', '?')} | "
                     f"velas_verdes={c.get('green_candles', 0)} | "
@@ -257,10 +304,11 @@ class MarquitosAgent:
             user_prompt = (
                 f"CAPITAL DISPONIBLE: {self.capital:.2f} USDT\n"
                 f"TP objetivo: +0.8% | SL automático: -0.3%\n\n"
-                f"CANDIDATOS PARA SCALPING LONG AHORA:\n{candidates_text}\n\n"
-                f"Elegí UNA sola moneda para entrar AHORA o decí null si ninguna vale la pena.\n"
+                f"CANDIDATOS PARA SCALPING AHORA (podés elegir LONG o SHORT):\n{candidates_text}\n\n"
+                f"Elegí UNA sola moneda y dirección (LONG/SHORT) para entrar AHORA, "
+                f"o decí null si ninguna vale la pena.\n"
                 f"Respondé SOLO JSON válido sin nada extra:\n"
-                f'{{ "symbol": "SIMBOLOUSDT" o null, "reason": "..." }}'
+                f'{{ "symbol": "SIMBOLOUSDT" o null, "side": "LONG"|"SHORT"|null, "reason": "..." }}'
             )
 
             client = _build_llm_client()
@@ -285,9 +333,12 @@ class MarquitosAgent:
                 return None
             data = json.loads(m.group(0))
             symbol = data.get("symbol")
+            side = str(data.get("side", "")).upper() if data.get("side") is not None else ""
             reason = data.get("reason", "")
-            self.last_ai_decision = f"Elegido: {symbol} — {reason}" if symbol else f"No operar — {reason}"
-            logger.info("🐺 [Marquitos] IA eligió: %s | %s", symbol, reason)
+            self.last_ai_decision = (
+                f"Elegido: {symbol} {side or ''} — {reason}" if symbol else f"No operar — {reason}"
+            )
+            logger.info("🐺 [Marquitos] IA eligió: %s %s | %s", symbol, side or "", reason)
 
             if not symbol:
                 return None
@@ -295,7 +346,10 @@ class MarquitosAgent:
             # Buscar el candidato elegido en la lista
             for c in candidates:
                 if c["symbol"] == symbol:
-                    return c
+                    chosen_side = side if side in {"LONG", "SHORT"} else c.get("direction_hint", "LONG")
+                    out = dict(c)
+                    out["side"] = chosen_side
+                    return out
 
             # Si la IA devolvió un símbolo fuera de la lista, ignorar
             logger.warning("🐺 [Marquitos] IA eligió símbolo no listado: %s", symbol)
@@ -311,7 +365,14 @@ class MarquitosAgent:
 
     def _open_position(self, entry: dict) -> None:
         symbol = entry["symbol"]
+        side = str(entry.get("side", "LONG")).upper()
+        if side not in {"LONG", "SHORT"}:
+            side = "LONG"
         price = float(entry.get("current_price", entry["price"]))
+
+        if not order_manager.is_symbol_open(symbol):
+            logger.warning("🐺 [Marquitos] Símbolo %s cerrado/no tradable. Lo salteo.", symbol)
+            return
 
         if self.capital <= 0:
             logger.warning("🐺 [Marquitos] Capital agotado.")
@@ -321,13 +382,20 @@ class MarquitosAgent:
         if quantity <= 0:
             return
 
-        tp_price = round(price * (1 + TAKE_PROFIT_PCT), 8)
-        sl_price = round(price * (1 - STOP_LOSS_PCT), 8)
+        if side == "LONG":
+            tp_price = round(price * (1 + TAKE_PROFIT_PCT), 8)
+            sl_price = round(price * (1 - STOP_LOSS_PCT), 8)
+        else:
+            tp_price = round(price * (1 - TAKE_PROFIT_PCT), 8)
+            sl_price = round(price * (1 + STOP_LOSS_PCT), 8)
 
         if not self.dry_run:
             try:
                 order_manager.set_leverage(symbol, MARQUITOS_LEVERAGE)
-                order_manager.open_long(symbol, quantity)
+                if side == "LONG":
+                    order_manager.open_long(symbol, quantity)
+                else:
+                    order_manager.open_short(symbol, quantity)
             except Exception as exc:
                 error_logger.error("🐺 [Marquitos] Error abriendo %s: %s", symbol, exc)
                 return
@@ -343,13 +411,19 @@ class MarquitosAgent:
             "pnl_pct": 0.0,
             "change_pct_24h": entry.get("change_pct", 0),
             "category": entry.get("category", "altcoin"),
+            "side": side,
         }
         self.position_symbol = symbol
+        self.position_side = side
 
         logger.info(
-            "🐺 [Marquitos] 🟢 LONG %s @ %.8g | qty=%.4f | "
+            "🐺 [Marquitos] %s %s %s @ %.8g | qty=%.4f | "
             "TP=%.8g (+%.1f%%) | SL=%.8g (-%.1f%%) | dry=%s",
-            symbol, price, quantity,
+            "🟢" if side == "LONG" else "🔴",
+            side,
+            symbol,
+            price,
+            quantity,
             tp_price, TAKE_PROFIT_PCT * 100,
             sl_price, STOP_LOSS_PCT * 100,
             self.dry_run,
@@ -363,6 +437,7 @@ class MarquitosAgent:
 
         symbol = self.position_symbol
         pos = self.position
+        side = str(pos.get("side", self.position_side or "LONG"))
         hold_secs = time.time() - pos["open_time"]
 
         try:
@@ -373,8 +448,12 @@ class MarquitosAgent:
             logger.warning("🐺 [Marquitos] No pude obtener precio de %s, reintentando en %ds...", symbol, MONITOR_INTERVAL)
             return
 
-        pnl = (current_price - pos["entry_price"]) * pos["quantity"]
-        pnl_pct = (current_price - pos["entry_price"]) / pos["entry_price"]
+        if side == "LONG":
+            pnl = (current_price - pos["entry_price"]) * pos["quantity"]
+            pnl_pct = (current_price - pos["entry_price"]) / pos["entry_price"]
+        else:
+            pnl = (pos["entry_price"] - current_price) * pos["quantity"]
+            pnl_pct = (pos["entry_price"] - current_price) / pos["entry_price"]
 
         # Actualizar estado en tiempo real para el frontend
         pos["current_price"] = current_price
@@ -387,30 +466,30 @@ class MarquitosAgent:
 
         if hit_tp:
             logger.info(
-                "🐺 [Marquitos] ✅ TP %s @ %.8g | PnL=%+.4f USDT (+%.2f%%) | %.0fs",
-                symbol, current_price, pnl, pnl_pct * 100, hold_secs,
+                "🐺 [Marquitos] ✅ TP %s %s @ %.8g | PnL=%+.4f USDT (+%.2f%%) | %.0fs",
+                side, symbol, current_price, pnl, pnl_pct * 100, hold_secs,
             )
             self._close_position(pnl, pnl_pct, win=True)
 
         elif hit_sl:
             logger.info(
-                "🐺 [Marquitos] ❌ SL -0.3%% %s @ %.8g | PnL=%.4f USDT (%.2f%%) | %.0fs",
-                symbol, current_price, pnl, pnl_pct * 100, hold_secs,
+                "🐺 [Marquitos] ❌ SL -0.3%% %s %s @ %.8g | PnL=%.4f USDT (%.2f%%) | %.0fs",
+                side, symbol, current_price, pnl, pnl_pct * 100, hold_secs,
             )
             self._close_position(pnl, pnl_pct, win=False)
 
         elif timeout:
             logger.info(
-                "🐺 [Marquitos] ⏱ Timeout %s @ %.8g | PnL=%.4f USDT (%.2f%%) | %.0fs",
-                symbol, current_price, pnl, pnl_pct * 100, hold_secs,
+                "🐺 [Marquitos] ⏱ Timeout %s %s @ %.8g | PnL=%.4f USDT (%.2f%%) | %.0fs",
+                side, symbol, current_price, pnl, pnl_pct * 100, hold_secs,
             )
             self._close_position(pnl, pnl_pct, win=pnl > 0)
 
         else:
             logger.info(
-                "🐺 [Marquitos] 👁 %s | precio=%.8g | TP=%.8g | SL=%.8g | "
+                "🐺 [Marquitos] 👁 %s %s | precio=%.8g | TP=%.8g | SL=%.8g | "
                 "PnL=%+.4f (%.2f%%) | %.0fs",
-                symbol, current_price,
+                side, symbol, current_price,
                 pos["take_profit_price"], pos["stop_loss_price"],
                 pnl, pnl_pct * 100, hold_secs,
             )
@@ -436,6 +515,7 @@ class MarquitosAgent:
 
             user_prompt = (
                 f"Posición abierta en {symbol}.\n"
+                f"Dirección: {pos.get('side', self.position_side or 'LONG')}\n"
                 f"Entrada: {pos['entry_price']:.8g} | Precio actual: {current_price:.8g}\n"
                 f"PnL actual: {pnl_pct*100:.2f}% | Tiempo abierta: {hold_secs:.0f}s\n"
                 f"TP objetivo: +0.8% | SL automático: -0.3%\n"
@@ -481,10 +561,12 @@ class MarquitosAgent:
             return
 
         hold_secs = time.time() - pos["open_time"]
+        side = str(pos.get("side", self.position_side or "LONG"))
 
         if not self.dry_run:
             try:
-                order_manager.close_position(symbol, "BUY", pos["quantity"])
+                open_side = "BUY" if side == "LONG" else "SELL"
+                order_manager.close_position(symbol, open_side, pos["quantity"])
             except Exception as exc:
                 error_logger.error("🐺 [Marquitos] Error cerrando %s: %s", symbol, exc)
 
@@ -523,6 +605,7 @@ class MarquitosAgent:
 
         self.position = None
         self.position_symbol = None
+        self.position_side = None
 
 
 # ── Instancia global ──────────────────────────────────────────────────────────

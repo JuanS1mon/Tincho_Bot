@@ -13,6 +13,7 @@ La IA de Marquitos usa esta lista para elegir qué operar.
 """
 from __future__ import annotations
 
+import time
 from typing import Any, Dict, List
 
 from exchange.futures_client import futures_client
@@ -47,6 +48,33 @@ class MarquitosCoinFinder:
         # → [{"symbol": "PEPEUSDT", "price": ..., "change_pct": 5.2, ...}, ...]
     """
 
+    def __init__(self) -> None:
+        self._active_symbols_cache: set[str] = set()
+        self._active_symbols_cache_at: float = 0.0
+
+    def _get_active_symbols(self, max_age_seconds: int = 300) -> set[str]:
+        """Retorna símbolos con estado TRADING para evitar pares cerrados/delisted."""
+        now = time.time()
+        if self._active_symbols_cache and (now - self._active_symbols_cache_at) < max_age_seconds:
+            return self._active_symbols_cache
+
+        try:
+            info = futures_client.safe_call(futures_client.client.futures_exchange_info)
+            symbols = info.get("symbols", []) if isinstance(info, dict) else []
+            active = {
+                str(s.get("symbol", "")).upper()
+                for s in symbols
+                if str(s.get("symbol", "")).upper().endswith("USDT")
+                and str(s.get("status", "")).upper() == "TRADING"
+            }
+            if active:
+                self._active_symbols_cache = active
+                self._active_symbols_cache_at = now
+            return active
+        except Exception as exc:
+            error_logger.warning("CoinFinder._get_active_symbols error: %s", exc)
+            return self._active_symbols_cache
+
     def scan(self, top_n: int = 8) -> List[Dict[str, Any]]:
         """
         Escanea todos los pares USDT de Binance Futures y retorna los mejores
@@ -62,10 +90,13 @@ class MarquitosCoinFinder:
             error_logger.error("CoinFinder.scan: error obteniendo tickers: %s", exc)
             return []
 
+        active_symbols = self._get_active_symbols()
+
         usdt_pairs = [
             t for t in raw_tickers
             if str(t.get("symbol", "")).endswith("USDT")
             and str(t.get("symbol", "")) not in _BLACKLIST
+            and (not active_symbols or str(t.get("symbol", "")).upper() in active_symbols)
         ]
 
         candidates: List[Dict[str, Any]] = []
@@ -88,11 +119,8 @@ class MarquitosCoinFinder:
                 # Volumen score: normalizado sobre 50M USDT (ajustable)
                 volume_score = min(volume_usdt / 50_000_000, 1.0)
 
-                # Solo nos interesan los que suben (Marquitos es scalper LONG)
-                if change_pct <= 0:
-                    continue
-
-                score = (change_pct * 0.4) + (volume_score * 0.3) + (meme_bonus * 0.3)
+                direction_hint = "LONG" if change_pct > 0 else "SHORT"
+                score = (abs(change_pct) * 0.4) + (volume_score * 0.3) + (meme_bonus * 0.3)
 
                 candidates.append({
                     "symbol": symbol,
@@ -101,6 +129,7 @@ class MarquitosCoinFinder:
                     "volume_usdt": round(volume_usdt, 0),
                     "is_meme": is_meme,
                     "score": round(score, 4),
+                    "direction_hint": direction_hint,
                     "category": "meme" if is_meme else "altcoin",
                 })
 
