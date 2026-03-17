@@ -36,6 +36,7 @@ from config.logger import trading_logger as logger
 
 from api.marquitos_state import router as marquitos_router
 from api.marquitos_chat import router as marquitos_chat_router
+from api.ruben_api import router as ruben_router
 from ai.tool_definitions import TINCHO2_TOOLS
 
 if TYPE_CHECKING:
@@ -60,6 +61,7 @@ app.add_middleware(
 # Routers extra
 app.include_router(marquitos_router)
 app.include_router(marquitos_chat_router)
+app.include_router(ruben_router)
 
 # Referencia al agente (inyectada desde agent_runner.py)
 _agent: Optional["TradingAgent"] = None
