@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     tool_calling_tincho1: bool = False
     tool_calling_tincho2: bool = False
     tool_calling_marquitos: bool = False
+    tool_calling_ruben: bool = False
 
     # ── Trading ───────────────────────────────────────────────────────────────
     initial_capital: float = 100.0

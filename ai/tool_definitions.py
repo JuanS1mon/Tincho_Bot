@@ -203,3 +203,82 @@ MARQUITOS_TOOLS: List[Dict[str, Any]] = [
         },
     },
 ]
+
+
+RUBEN_TOOLS: List[Dict[str, Any]] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_insights_report",
+            "description": "Generar reporte analítico offline basado en datos históricos de MongoDB.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "hours": _num_field("Horas de datos históricos a analizar", 1, 720),
+                    "symbols": {
+                        "type": "string",
+                        "description": "Símbolos CSV (ej: BTCUSDT,ETHUSDT)",
+                    },
+                    "analysis_type": {
+                        "type": "string",
+                        "description": "Tipo de análisis",
+                        "enum": ["simple", "two_layer"],
+                    },
+                },
+                "required": ["hours"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "select_profile",
+            "description": "Seleccionar perfil de recomendación (conservador o agresivo).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "profile": {
+                        "type": "string",
+                        "description": "Perfil a seleccionar",
+                        "enum": ["conservative", "aggressive"],
+                    },
+                    "reasoning": {"type": "string", "description": "Motivo de la selección"},
+                },
+                "required": ["profile"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "apply_recommendations",
+            "description": "Aplicar recomendaciones de Ruben a Tincho1.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "apply_profile": {"type": "string", "description": "Aplicar profil seleccionado", "enum": ["yes", "no"]},
+                    "confidence_threshold": _num_field("Confianza mínima para aplicar", 0.0, 1.0),
+                },
+                "required": ["apply_profile"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "skip_analysis",
+            "description": "Omitir análisis Ruben si no hay datos suficientes.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reason": {"type": "string", "description": "Motivo para omitir análisis"},
+                },
+                "required": ["reason"],
+                "additionalProperties": False,
+            },
+        },
+    },
+]
