@@ -48,7 +48,7 @@ class RubenToolCallingWrapper:
         self._db_name = db_name
         self._insights_agent = TinchoDataInsightsAgent(mongo_uri, db_name)
         self._llm_client = llm_client or LLMClient()
-        self._state_repo = StateRepository(mongo_uri, db_name)
+        self._state_repo = StateRepository()
 
         # Cache for current analysis
         self._last_analysis: Optional[Dict[str, Any]] = None
